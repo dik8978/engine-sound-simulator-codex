@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test:reference": "node scripts/test-reference-analyzer.mjs",
     "build": "node scripts/build-sites.mjs",
     "build:github-pages": "node scripts/build-github-pages.mjs",
     "build:static": "mkdir -p dist && cd public && zip -r ../dist/engine-sound-simulator-public.zip .",

@@ -77,8 +77,9 @@ const protectedWorklet = await protectJs(workletSource, "engine-worklet.js");
 const workletFile = `engine-worklet.${contentHash(protectedWorklet)}.js`;
 await writeFile(path.join(outputDir, workletFile), protectedWorklet);
 
+const referenceAnalyzerSource = await readFile(path.join(sourceDir, "reference-analyzer.js"), "utf8");
 const mainSource = await readFile(path.join(sourceDir, "main.js"), "utf8");
-const protectedMainSource = mainSource.replace(
+const protectedMainSource = `${referenceAnalyzerSource}\n${mainSource}`.replace(
   /audioCtx\.audioWorklet\.addModule\(['"]engine-worklet\.js['"]\)/,
   `audioCtx.audioWorklet.addModule('${workletFile}')`,
 );
@@ -99,6 +100,7 @@ const protectedHtml = minifyHtml(
       '<title>Engine Sound Simulator</title><meta name="robots" content="noindex,nofollow">',
     )
     .replace('href="style.css"', `href="${cssFile}"`)
+    .replace('<script src="reference-analyzer.js"></script>', '')
     .replace('src="main.js"', `src="${mainFile}"`),
 );
 await writeFile(path.join(outputDir, "index.html"), protectedHtml);

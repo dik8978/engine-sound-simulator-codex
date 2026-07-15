@@ -229,6 +229,16 @@ function audioOutputLabel(deviceId = audioOutputDeviceId) {
   return option?.textContent || (deviceId === 'default' ? 'Default' : 'Selected');
 }
 
+async function applyReferenceAudioSink(sinkId) {
+  const referenceAudio = $('referenceAudio');
+  if (!referenceAudio || typeof referenceAudio.setSinkId !== 'function') return;
+  try {
+    await referenceAudio.setSinkId(sinkId);
+  } catch {
+    // The synthesized engine output remains active even if preview routing is unavailable.
+  }
+}
+
 function connectAudioToOutput(useElementSink = false) {
   if (!audioCtx || !gainNode) return;
   try { gainNode.disconnect(); } catch {}
@@ -272,6 +282,7 @@ async function applyAudioOutput(deviceId = audioOutputDeviceId) {
       connectAudioToOutput(false);
       if (sinkId) throw new Error('Audio output selection is not supported by this browser.');
     }
+    await applyReferenceAudioSink(sinkId);
     setAudioOutputStatus(label, audioOutputDeviceId !== 'default');
   } catch (err) {
     setAudioOutputStatus('出力先変更失敗');
@@ -663,6 +674,282 @@ function refreshConfigForm() {
     const k = el.dataset.key;
     el.value = el.classList.contains('num') ? formatConfigNumber(k) : config[k];
   }
+}
+
+// ---------------- reference audio analysis ----------------
+const referenceState = {
+  file: null,
+  audioBuffer: null,
+  objectUrl: '',
+  result: null,
+};
+
+const REFERENCE_LAYOUT_LABELS = {
+  inline: '直列',
+  v60: 'V型 60°',
+  v90: 'V型 90°',
+  flat: '水平対向',
+  crossplane: 'V8 クロスプレーン',
+  vtwin: 'Vツイン',
+};
+
+function setConfigMode(mode) {
+  const selected = mode === 'reference' ? 'reference' : 'adjust';
+  $('configPanel').dataset.configMode = selected;
+  const adjust = selected === 'adjust';
+  $('engineAdjustTab').setAttribute('aria-selected', String(adjust));
+  $('engineAdjustTab').tabIndex = adjust ? 0 : -1;
+  $('referenceTab').setAttribute('aria-selected', String(!adjust));
+  $('referenceTab').tabIndex = adjust ? -1 : 0;
+  $('configForm').setAttribute('aria-hidden', String(!adjust));
+  $('referencePanel').setAttribute('aria-hidden', String(adjust));
+  if (!adjust && referenceState.result) requestAnimationFrame(() => drawReferenceSpectrum(referenceState.result));
+}
+
+function formatReferenceBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function setReferenceStatus(message, isError = false) {
+  $('referenceStatus').textContent = message;
+  $('referenceStatus').classList.toggle('error', isError);
+}
+
+async function loadReferenceFile(file) {
+  if (!file) return;
+  const extensionOk = /\.(wav|mp3|m4a|aac|flac|ogg|oga|webm)$/i.test(file.name);
+  if (!file.type.startsWith('audio/') && !extensionOk) {
+    setReferenceStatus('対応する音声ファイルを選択してください', true);
+    return;
+  }
+  if (file.size > 80 * 1024 * 1024) {
+    setReferenceStatus('ファイルは80 MB以下にしてください', true);
+    return;
+  }
+
+  $('referenceAnalyzeBtn').disabled = true;
+  $('referenceResult').hidden = true;
+  setReferenceStatus('音声を読み込み中...');
+  try {
+    const encoded = await file.arrayBuffer();
+    const decodeContext = audioCtx || new AudioContext({ latencyHint: 'playback' });
+    const decoded = await decodeContext.decodeAudioData(encoded.slice(0));
+    if (decodeContext !== audioCtx) await decodeContext.close();
+    if (referenceState.objectUrl) URL.revokeObjectURL(referenceState.objectUrl);
+    referenceState.file = file;
+    referenceState.audioBuffer = decoded;
+    referenceState.objectUrl = URL.createObjectURL(file);
+    referenceState.result = null;
+    $('referenceAudio').src = referenceState.objectUrl;
+    $('referenceAudio').hidden = false;
+    $('referenceFileMeta').textContent =
+      `${file.name} / ${decoded.duration.toFixed(1)} s / ${Math.round(decoded.sampleRate)} Hz / ${decoded.numberOfChannels} ch / ${formatReferenceBytes(file.size)}`;
+    $('referenceAnalyzeBtn').disabled = false;
+    setReferenceStatus('解析可能');
+  } catch (error) {
+    referenceState.file = null;
+    referenceState.audioBuffer = null;
+    $('referenceFileMeta').textContent = '読み込み失敗';
+    setReferenceStatus(`音声を読み込めません: ${error.message || error}`, true);
+  }
+}
+
+function referenceConfidenceLabel(confidence) {
+  const level = confidence >= 0.72 ? '高' : confidence >= 0.48 ? '中' : '低';
+  return `確度 ${level} ${Math.round(confidence * 100)}%`;
+}
+
+function drawReferenceSpectrum(result) {
+  const canvas = $('referenceSpectrum');
+  const rect = canvas.getBoundingClientRect();
+  const cssWidth = Math.max(280, rect.width || 340);
+  const cssHeight = Math.max(112, rect.height || cssWidth / 2.6);
+  const scale = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(cssWidth * scale);
+  canvas.height = Math.round(cssHeight * scale);
+  const context = canvas.getContext('2d');
+  context.setTransform(scale, 0, 0, scale, 0, 0);
+  context.clearRect(0, 0, cssWidth, cssHeight);
+  context.fillStyle = '#050505';
+  context.fillRect(0, 0, cssWidth, cssHeight);
+
+  const padding = { left: 32, right: 10, top: 10, bottom: 22 };
+  const width = cssWidth - padding.left - padding.right;
+  const height = cssHeight - padding.top - padding.bottom;
+  const spectrum = result.orderSpectrum;
+  const maxOrder = spectrum.at(-1)?.order || 1;
+  context.font = '9px "SF Mono", Menlo, monospace';
+  context.textAlign = 'right';
+  context.textBaseline = 'middle';
+  for (const db of [-36, -24, -12, 0]) {
+    const y = padding.top + (1 - (db + 48) / 48) * height;
+    context.strokeStyle = db === 0 ? '#555' : '#242424';
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(padding.left + width, y);
+    context.stroke();
+    context.fillStyle = '#777';
+    context.fillText(String(db), padding.left - 4, y);
+  }
+  context.textAlign = 'center';
+  context.textBaseline = 'top';
+  const orderStep = maxOrder > 16 ? 4 : 2;
+  for (let order = orderStep; order <= maxOrder; order += orderStep) {
+    const x = padding.left + order / maxOrder * width;
+    context.fillStyle = '#777';
+    context.fillText(String(order), x, padding.top + height + 5);
+  }
+
+  context.strokeStyle = '#f2f2f2';
+  context.lineWidth = 1.5;
+  context.beginPath();
+  spectrum.forEach((point, index) => {
+    const x = padding.left + point.order / maxOrder * width;
+    const y = padding.top + (1 - (point.db + 48) / 48) * height;
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.stroke();
+
+  context.fillStyle = '#fff';
+  for (let order = result.candidate.firingOrder; order <= maxOrder; order += result.candidate.firingOrder) {
+    const point = spectrum.reduce((closest, item) =>
+      Math.abs(item.order - order) < Math.abs(closest.order - order) ? item : closest, spectrum[0]);
+    const x = padding.left + point.order / maxOrder * width;
+    const y = padding.top + (1 - (point.db + 48) / 48) * height;
+    context.beginPath();
+    context.arc(x, y, 2.5, 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+function showReferenceResult(result) {
+  const layout = REFERENCE_LAYOUT_LABELS[result.candidate.layout] || result.candidate.layout;
+  $('referenceCandidate').textContent = `${result.candidate.cylinders}気筒相当 / ${layout}`;
+  $('referenceConfidence').textContent = referenceConfidenceLabel(result.confidence);
+  $('referenceOrder').textContent = result.candidate.firingOrder.toFixed(1);
+  $('referenceHarmonicity').textContent = `${Math.round(result.features.harmonicity * 100)}%`;
+  $('referenceBroadband').textContent = `${Math.round(result.features.broadband * 100)}%`;
+  $('referenceCentroid').textContent = `${Math.round(result.features.centroidHz)} Hz`;
+  $('referenceResult').hidden = false;
+  drawReferenceSpectrum(result);
+}
+
+async function analyzeReferenceFile() {
+  if (!referenceState.audioBuffer || !window.ReferenceEngineAnalyzer) return;
+  const rpm = finiteNumber($('referenceRpm').value);
+  const speedKmh = finiteNumber($('referenceSpeed').value);
+  if (rpm == null || rpm < 400 || rpm > 20000) {
+    setReferenceStatus('回転数は400〜20000 rpmで入力してください', true);
+    $('referenceRpm').focus();
+    return;
+  }
+  if (speedKmh == null || speedKmh < 0 || speedKmh > 450) {
+    setReferenceStatus('速度は0〜450 km/hで入力してください', true);
+    $('referenceSpeed').focus();
+    return;
+  }
+
+  $('referenceAnalyzeBtn').disabled = true;
+  setReferenceStatus('次数成分と広帯域成分を解析中...');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  try {
+    const channels = Array.from(
+      { length: referenceState.audioBuffer.numberOfChannels },
+      (_, channel) => referenceState.audioBuffer.getChannelData(channel),
+    );
+    referenceState.result = window.ReferenceEngineAnalyzer.analyze(
+      channels,
+      referenceState.audioBuffer.sampleRate,
+      { rpm, speedKmh, currentConfig: config },
+    );
+    showReferenceResult(referenceState.result);
+    setReferenceStatus(`解析完了 / 使用区間 ${referenceState.result.analysis.durationSeconds.toFixed(1)} s`);
+  } catch (error) {
+    referenceState.result = null;
+    $('referenceResult').hidden = true;
+    setReferenceStatus(`解析できません: ${error.message || error}`, true);
+  } finally {
+    $('referenceAnalyzeBtn').disabled = false;
+  }
+}
+
+function markReferencePreset() {
+  const select = $('preset');
+  select.querySelector('option[data-reference]')?.remove();
+  const option = document.createElement('option');
+  option.dataset.reference = 'true';
+  option.value = 'r:reference';
+  option.textContent = `Reference: ${referenceState.file?.name || '推定結果'}`;
+  select.appendChild(option);
+  select.value = option.value;
+}
+
+function applyReferenceResult(audition = false) {
+  const result = referenceState.result;
+  if (!result) return;
+  config = sanitizeConfig({ ...config, ...result.configPatch });
+  refreshConfigForm();
+  markReferencePreset();
+  const presetName = (referenceState.file?.name || 'Reference').replace(/\.[^.]+$/, '').slice(0, 48);
+  $('presetName').value = `${presetName} Reference`;
+  sendConfig();
+
+  if (audition) {
+    ctl.extRpm = result.rpm;
+    ctl.extLoad = clamp(0.38 + result.features.harmonicity * 0.48, 0, 1);
+    $('extRpm').value = result.rpm;
+    $('extRpmVal').textContent = String(Math.round(result.rpm));
+    setMode('ext');
+    sendControls();
+    setReferenceStatus(`${Math.round(result.rpm)} rpmへ固定 / 操作タブで試聴中`);
+  } else {
+    setConfigMode('adjust');
+  }
+}
+
+function setupReferenceMode() {
+  setConfigMode('adjust');
+  $('engineAdjustTab').addEventListener('click', () => setConfigMode('adjust'));
+  $('referenceTab').addEventListener('click', () => setConfigMode('reference'));
+  $('configPanel').querySelector('.config-mode-tabs').addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const next = $('configPanel').dataset.configMode === 'adjust' ? 'reference' : 'adjust';
+    setConfigMode(next);
+    $(next === 'reference' ? 'referenceTab' : 'engineAdjustTab').focus();
+  });
+
+  const fileInput = $('referenceFile');
+  const dropZone = $('referenceDropZone');
+  fileInput.addEventListener('click', () => { fileInput.value = ''; });
+  fileInput.addEventListener('change', () => { void loadReferenceFile(fileInput.files?.[0]); });
+  dropZone.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    fileInput.click();
+  });
+  dropZone.addEventListener('dragenter', (event) => {
+    event.preventDefault();
+    dropZone.classList.add('dragging');
+  });
+  dropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragging'));
+  dropZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('dragging');
+    void loadReferenceFile(event.dataTransfer.files?.[0]);
+  });
+  $('referenceAnalyzeBtn').addEventListener('click', () => { void analyzeReferenceFile(); });
+  $('referenceApplyBtn').addEventListener('click', () => applyReferenceResult(false));
+  $('referenceAuditionBtn').addEventListener('click', () => applyReferenceResult(true));
+  window.addEventListener('resize', () => {
+    if (referenceState.result && $('configPanel').dataset.configMode === 'reference') drawReferenceSpectrum(referenceState.result);
+  });
 }
 
 // debounced live config apply
@@ -1084,6 +1371,7 @@ function syncPedalUi() {
 
 buildConfigForm();
 buildPresets();
+setupReferenceMode();
 setupUI();
 refreshAudioOutputs();
 setExternalSource(ctl.externalSource);
