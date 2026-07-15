@@ -1,0 +1,672 @@
+// Engine Sound Simulator - UI / control / OSC routing
+
+const $ = (id) => document.getElementById(id);
+
+// ---------------- config schema & presets ----------------
+const DEFAULT_CONFIG = {
+  displacement: 2.0, cylinders: 4, layout: 'inline', firingUnevenness: 0,
+  idleRpm: 850, redline: 7200,
+  maxTorque: 200, peakTorqueRpm: 4200, maxSpeedKmh: 220, vehicleMass: 1300,
+  maxBrakeG: 0.9,
+  numGears: 6, engineInertia: 0.18, engineBrake: 1.0, transmission: 'auto',
+  pipeLength: 2.5, muffler: 0.55, drive: 0.35, intakeNoise: 0.35, crackle: 0.25,
+  turboWhine: 0, mechanicalNoise: 0.35, camLope: 0.05,
+  eqLow: 0, eqLowMid: 0, eqPresence: 0, eqHigh: 0,
+};
+
+const CONFIG_SCHEMA = [
+  { section: 'エンジン基本', items: [
+    { key: 'displacement', label: '排気量 (L)', min: 0.05, max: 9, step: 0.05 },
+    { key: 'cylinders', label: '気筒数', min: 1, max: 16, step: 1 },
+    { key: 'layout', label: 'エンジン形式', type: 'select', options: [
+      ['inline', '直列'], ['v60', 'V型 60°'], ['v90', 'V型 90°'],
+      ['flat', '水平対向'], ['crossplane', 'V8 クロスプレーン'], ['vtwin', 'Vツイン (不等間隔)'],
+    ]},
+    { key: 'firingUnevenness', label: '点火間隔の不等度', min: 0, max: 1, step: 0.01 },
+    { key: 'idleRpm', label: 'アイドル回転数 (rpm)', min: 400, max: 5000, step: 50 },
+    { key: 'redline', label: 'レブリミット (rpm)', min: 3000, max: 20000, step: 100 },
+  ]},
+  { section: '性能・車両', items: [
+    { key: 'maxTorque', label: '最大トルク (Nm)', min: 20, max: 1200, step: 5 },
+    { key: 'peakTorqueRpm', label: '最大トルク回転数 (rpm)', min: 1000, max: 14000, step: 100 },
+    { key: 'maxSpeedKmh', label: '最高速度 (km/h)', min: 60, max: 450, step: 5 },
+    { key: 'vehicleMass', label: '車両重量 (kg)', min: 100, max: 3500, step: 10 },
+    { key: 'maxBrakeG', label: 'ブレーキ最大減速G', min: 0.3, max: 6, step: 0.1 },
+    { key: 'numGears', label: 'ギア段数', min: 1, max: 9, step: 1 },
+    { key: 'transmission', label: 'トランスミッション', type: 'select', options: [
+      ['auto', 'オートマチック'], ['manual', 'マニュアル'],
+    ]},
+    { key: 'engineInertia', label: 'エンジン慣性 (kg·m²)', min: 0.03, max: 1.5, step: 0.01 },
+    { key: 'engineBrake', label: 'エンジンブレーキ強さ', min: 0, max: 3, step: 0.05 },
+  ]},
+  { section: '排気・サウンド', items: [
+    { key: 'pipeLength', label: '排気管長 (m)', min: 0.4, max: 6, step: 0.1 },
+    { key: 'muffler', label: 'マフラー消音度', min: 0, max: 1, step: 0.01 },
+    { key: 'drive', label: '歪み / 荒々しさ', min: 0, max: 1, step: 0.01 },
+    { key: 'intakeNoise', label: '吸気ノイズ', min: 0, max: 1, step: 0.01 },
+    { key: 'crackle', label: 'アフターファイア (減速時)', min: 0, max: 1, step: 0.01 },
+    { key: 'turboWhine', label: 'ターボ / 電動ホイーン', min: 0, max: 1, step: 0.01 },
+    { key: 'mechanicalNoise', label: 'メカノイズ / ギア鳴り', min: 0, max: 1, step: 0.01 },
+    { key: 'camLope', label: 'アイドル不整脈', min: 0, max: 1, step: 0.01 },
+  ]},
+  { section: '最終EQ', items: [
+    { key: 'eqLow', label: 'Low Shelf 120Hz (dB)', min: -12, max: 12, step: 0.5 },
+    { key: 'eqLowMid', label: 'Low-Mid 420Hz (dB)', min: -12, max: 12, step: 0.5 },
+    { key: 'eqPresence', label: 'Presence 2.4kHz (dB)', min: -12, max: 12, step: 0.5 },
+    { key: 'eqHigh', label: 'High Shelf 6.5kHz (dB)', min: -12, max: 12, step: 0.5 },
+  ]},
+];
+
+const CONFIG_BY_KEY = new Map(CONFIG_SCHEMA.flatMap((sec) => sec.items.map((item) => [item.key, item])));
+const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+
+function finiteNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sanitizeConfigValue(key, value, fallback = DEFAULT_CONFIG[key]) {
+  const item = CONFIG_BY_KEY.get(key);
+  if (!item) return undefined;
+  if (item.type === 'select') {
+    return item.options.some(([v]) => v === value) ? value : fallback;
+  }
+  const n = finiteNumber(value);
+  if (n == null) return fallback;
+  const clamped = clamp(n, item.min, item.max);
+  return item.step === 1 ? Math.round(clamped) : clamped;
+}
+
+function sanitizeConfig(src) {
+  const next = { ...DEFAULT_CONFIG };
+  for (const key of Object.keys(DEFAULT_CONFIG)) {
+    next[key] = sanitizeConfigValue(key, src?.[key], DEFAULT_CONFIG[key]);
+  }
+  next.redline = Math.max(next.redline, next.idleRpm + 500);
+  next.peakTorqueRpm = clamp(next.peakTorqueRpm, 1000, next.redline - 200);
+  return next;
+}
+
+const PRESETS = {
+  '2026 F1 1.6L V6 Hybrid': {
+    displacement: 1.6, cylinders: 6, layout: 'v90', firingUnevenness: 0.25,
+    idleRpm: 4200, redline: 12500,
+    maxTorque: 690, peakTorqueRpm: 7800, maxSpeedKmh: 355, vehicleMass: 780,
+    maxBrakeG: 4.5,
+    numGears: 8, transmission: 'manual', engineInertia: 0.035, engineBrake: 0.9,
+    pipeLength: 0.85, muffler: 0.02, drive: 0.72, intakeNoise: 0.62, crackle: 0.08,
+    turboWhine: 0.95, mechanicalNoise: 0.78, camLope: 0.12,
+  },
+  'Mazda Roadster RF 2.0 NA': {
+    displacement: 2.0, cylinders: 4, layout: 'inline', firingUnevenness: 0.03,
+    idleRpm: 850, redline: 7500,
+    maxTorque: 205, peakTorqueRpm: 4600, maxSpeedKmh: 220, vehicleMass: 1130,
+    numGears: 6, engineInertia: 0.13, engineBrake: 1.05,
+    pipeLength: 2.6, muffler: 0.50, drive: 0.34, intakeNoise: 0.46, crackle: 0.18,
+    turboWhine: 0, mechanicalNoise: 0.42, camLope: 0.08,
+  },
+  'Corvette C8 6.2L V8': {
+    displacement: 6.2, cylinders: 8, layout: 'crossplane', idleRpm: 700, redline: 6600,
+    maxTorque: 640, peakTorqueRpm: 5150, maxSpeedKmh: 312, vehicleMass: 1650,
+    numGears: 8, engineInertia: 0.34, engineBrake: 1.2,
+    pipeLength: 3.0, muffler: 0.16, drive: 0.62, intakeNoise: 0.42, crackle: 0.50,
+    turboWhine: 0, mechanicalNoise: 0.36, camLope: 0.28,
+  },
+  'BMW M3 G80 3.0L I6 Turbo': {
+    displacement: 3.0, cylinders: 6, layout: 'inline', idleRpm: 780, redline: 7200,
+    maxTorque: 650, peakTorqueRpm: 3600, maxSpeedKmh: 290, vehicleMass: 1740,
+    numGears: 8, engineInertia: 0.16, engineBrake: 0.95,
+    pipeLength: 2.4, muffler: 0.36, drive: 0.46, intakeNoise: 0.45, crackle: 0.42,
+    turboWhine: 0.48, mechanicalNoise: 0.42, camLope: 0.06,
+  },
+  'Porsche 911 GT3 4.0 Flat-6': {
+    displacement: 4.0, cylinders: 6, layout: 'flat', idleRpm: 900, redline: 9000,
+    maxTorque: 470, peakTorqueRpm: 6100, maxSpeedKmh: 318, vehicleMass: 1435,
+    numGears: 7, engineInertia: 0.12, engineBrake: 1.1,
+    pipeLength: 1.7, muffler: 0.24, drive: 0.48, intakeNoise: 0.58, crackle: 0.34,
+    turboWhine: 0, mechanicalNoise: 0.70, camLope: 0.12,
+  },
+  'Lamborghini Aventador 6.5L V12': {
+    displacement: 6.5, cylinders: 12, layout: 'v60', idleRpm: 900, redline: 9250,
+    maxTorque: 720, peakTorqueRpm: 6750, maxSpeedKmh: 350, vehicleMass: 1575,
+    numGears: 7, engineInertia: 0.2, engineBrake: 1.15,
+    pipeLength: 1.45, muffler: 0.18, drive: 0.57, intakeNoise: 0.56, crackle: 0.38,
+    turboWhine: 0, mechanicalNoise: 0.58, camLope: 0.08,
+  },
+  'Harley Sportster 1.2L V-Twin': {
+    displacement: 1.2, cylinders: 2, layout: 'vtwin', idleRpm: 1000, redline: 6200,
+    maxTorque: 105, peakTorqueRpm: 3800, maxSpeedKmh: 180, vehicleMass: 280,
+    numGears: 6, engineInertia: 0.08, engineBrake: 1.35,
+    pipeLength: 1.45, muffler: 0.12, drive: 0.68, intakeNoise: 0.25, crackle: 0.28,
+    turboWhine: 0, mechanicalNoise: 0.32, camLope: 0.62,
+  },
+  'Toyota GR Corolla 1.6L I3 Turbo': {
+    displacement: 1.6, cylinders: 3, layout: 'inline', firingUnevenness: 0.08,
+    idleRpm: 950, redline: 7200,
+    maxTorque: 370, peakTorqueRpm: 3600, maxSpeedKmh: 230, vehicleMass: 1475,
+    numGears: 6, engineInertia: 0.09, engineBrake: 1.0,
+    pipeLength: 2.0, muffler: 0.38, drive: 0.50, intakeNoise: 0.52, crackle: 0.36,
+    turboWhine: 0.56, mechanicalNoise: 0.48, camLope: 0.12,
+  },
+  'F1風 V10 3.0L': {
+    displacement: 3.0, cylinders: 10, layout: 'v90', idleRpm: 2000, redline: 18000,
+    maxTorque: 360, peakTorqueRpm: 14000, maxSpeedKmh: 340, vehicleMass: 600,
+    numGears: 7, engineInertia: 0.05, pipeLength: 0.9, muffler: 0.02, drive: 0.7, crackle: 0.5, intakeNoise: 0.6,
+    turboWhine: 0, mechanicalNoise: 0.85, camLope: 0.05,
+  },
+};
+
+// startup default: the F1 preset
+let config = sanitizeConfig({ ...DEFAULT_CONFIG, ...PRESETS['2026 F1 1.6L V6 Hybrid'] });
+
+// ---------------- audio ----------------
+let audioCtx = null;
+let engineNode = null;
+let gainNode = null;
+let eqNodes = null;
+
+function setFilterParam(param, value, timeConstant = 0.03) {
+  if (!audioCtx) {
+    param.value = value;
+    return;
+  }
+  param.setTargetAtTime(value, audioCtx.currentTime, timeConstant);
+}
+
+function createEqNodes(ctx) {
+  const low = ctx.createBiquadFilter();
+  low.type = 'lowshelf';
+  low.frequency.value = 120;
+  const lowMid = ctx.createBiquadFilter();
+  lowMid.type = 'peaking';
+  lowMid.frequency.value = 420;
+  lowMid.Q.value = 0.9;
+  const presence = ctx.createBiquadFilter();
+  presence.type = 'peaking';
+  presence.frequency.value = 2400;
+  presence.Q.value = 0.85;
+  const high = ctx.createBiquadFilter();
+  high.type = 'highshelf';
+  high.frequency.value = 6500;
+  return { low, lowMid, presence, high };
+}
+
+function applyOutputEq() {
+  if (!eqNodes) return;
+  setFilterParam(eqNodes.low.gain, config.eqLow);
+  setFilterParam(eqNodes.lowMid.gain, config.eqLowMid);
+  setFilterParam(eqNodes.presence.gain, config.eqPresence);
+  setFilterParam(eqNodes.high.gain, config.eqHigh);
+}
+
+async function startAudio() {
+  if (audioCtx) return; // guard against double start
+  audioCtx = new AudioContext({ latencyHint: 'interactive' });
+  await audioCtx.audioWorklet.addModule('engine-worklet.js');
+  engineNode = new AudioWorkletNode(audioCtx, 'engine-processor', { outputChannelCount: [2] });
+  eqNodes = createEqNodes(audioCtx);
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = $('volume').value / 100;
+  engineNode
+    .connect(eqNodes.low)
+    .connect(eqNodes.lowMid)
+    .connect(eqNodes.presence)
+    .connect(eqNodes.high)
+    .connect(gainNode)
+    .connect(audioCtx.destination);
+  engineNode.port.onmessage = (e) => onWorkletMessage(e.data);
+  applyOutputEq();
+  sendConfig();
+  sendControls();
+}
+
+function sendConfig() {
+  config = sanitizeConfig(config);
+  applyOutputEq();
+  if (engineNode) engineNode.port.postMessage({ type: 'config', config });
+}
+function sendCommand(cmd) {
+  if (engineNode) engineNode.port.postMessage({ type: 'command', cmd });
+}
+
+// ---------------- control state ----------------
+// throttle/brake take the max of UI slider, keyboard ramp, and OSC input
+const ctl = {
+  sliderThrottle: 0, sliderBrake: 0,
+  keyThrottle: 0, keyBrake: 0,
+  oscThrottle: 0, oscBrake: 0,
+  ignition: true,
+  mode: 'sim',
+  extRpm: 1000, extLoad: null,
+};
+const keys = { throttle: false, brake: false };
+let lastSent = '';
+
+function sendControls() {
+  if (!engineNode) return;
+  const controls = {
+    throttle: Math.max(ctl.sliderThrottle, ctl.keyThrottle, ctl.oscThrottle),
+    brake: Math.max(ctl.sliderBrake, ctl.keyBrake, ctl.oscBrake),
+    ignition: ctl.ignition,
+    mode: ctl.mode,
+    extRpm: ctl.extRpm,
+    extLoad: ctl.extLoad,
+  };
+  const s = JSON.stringify(controls);
+  if (s !== lastSent) {
+    engineNode.port.postMessage({ type: 'controls', controls });
+    lastSent = s;
+  }
+}
+
+// ---------------- worklet state / gauges ----------------
+let state = { rpm: 0, speedKmh: 0, gear: 1, throttle: 0, limiter: false };
+
+function onWorkletMessage(m) {
+  if (m.type === 'state') {
+    state = m;
+  } else if (m.type === 'derived') {
+    const ps = (m.powerKw * 1.3596).toFixed(0);
+    $('derivedInfo').textContent =
+      `推定最高出力: ${m.powerKw.toFixed(0)} kW (${ps} PS)\n` +
+      `ギア比: ${m.ratios.join(' / ')}\nCdA(空気抵抗): ${m.CdA}`;
+  }
+}
+
+const tach = $('tach');
+const speedo = $('speedo');
+
+// generic 270-degree monochrome gauge
+function drawGauge(canvas, opts) {
+  const g = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H / 2, R = W / 2 - 14;
+  g.clearRect(0, 0, W, H);
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+  const vToA = (v) => a0 + (a1 - a0) * Math.min(Math.max(v / opts.max, 0), 1);
+
+  // arc background
+  g.lineWidth = 10;
+  g.strokeStyle = '#222';
+  g.beginPath(); g.arc(cx, cy, R, a0, a1); g.stroke();
+  // red zone
+  if (opts.redFrom != null && opts.redFrom < opts.max) {
+    g.strokeStyle = '#555';
+    g.beginPath(); g.arc(cx, cy, R, vToA(opts.redFrom), a1); g.stroke();
+  }
+  // value fill
+  if (opts.value > 0) {
+    g.strokeStyle = opts.flash ? '#888' : '#fff';
+    g.beginPath(); g.arc(cx, cy, R, a0, vToA(opts.value)); g.stroke();
+  }
+  // ticks & labels
+  g.font = `${opts.tickFont || 13}px sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let v = 0; v <= opts.max; v += opts.step) {
+    const a = vToA(v);
+    const inRed = opts.redFrom != null && v >= opts.redFrom;
+    const x1 = cx + Math.cos(a) * (R - 14), y1 = cy + Math.sin(a) * (R - 14);
+    const x2 = cx + Math.cos(a) * (R - 22), y2 = cy + Math.sin(a) * (R - 22);
+    g.strokeStyle = inRed ? '#fff' : '#666';
+    g.lineWidth = 2;
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+    const xl = cx + Math.cos(a) * (R - 38), yl = cy + Math.sin(a) * (R - 38);
+    g.fillStyle = inRed ? '#fff' : '#999';
+    g.fillText(opts.tickLabel(v), xl, yl);
+  }
+  // needle
+  const a = vToA(opts.value);
+  g.strokeStyle = '#fff'; g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(cx, cy);
+  g.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26));
+  g.stroke();
+  g.fillStyle = '#fff';
+  g.beginPath(); g.arc(cx, cy, 7, 0, Math.PI * 2); g.fill();
+  // center label
+  g.fillStyle = '#999'; g.font = '12px sans-serif';
+  g.fillText(opts.label, cx, cy + R * 0.55);
+}
+
+function drawGauges() {
+  drawGauge(tach, {
+    value: state.rpm,
+    max: Math.ceil((config.redline + 500) / 1000) * 1000,
+    redFrom: config.redline,
+    step: 1000,
+    tickLabel: (v) => String(v / 1000),
+    label: '×1000 rpm',
+    flash: state.limiter,
+  });
+  const spdMax = Math.ceil((config.maxSpeedKmh + 10) / 20) * 20;
+  drawGauge(speedo, {
+    value: state.speedKmh,
+    max: spdMax,
+    redFrom: config.maxSpeedKmh,
+    step: spdMax > 300 ? 40 : 20,
+    tickLabel: (v) => String(v),
+    label: 'km/h',
+    tickFont: 11,
+  });
+}
+
+// ---------------- main loop ----------------
+let lastT = performance.now();
+function loop(now) {
+  const dt = Math.min((now - lastT) / 1000, 0.1);
+  lastT = now;
+  // keyboard pedal ramps
+  ctl.keyThrottle = keys.throttle ? Math.min(1, ctl.keyThrottle + dt * 3.5) : Math.max(0, ctl.keyThrottle - dt * 5);
+  ctl.keyBrake = keys.brake ? Math.min(1, ctl.keyBrake + dt * 4.5) : Math.max(0, ctl.keyBrake - dt * 6);
+  sendControls();
+
+  drawGauges();
+  $('rpmVal').textContent = Math.round(state.rpm);
+  $('speedVal').textContent = Math.round(state.speedKmh);
+  $('gearVal').textContent = state.gear === 0 ? 'N' : state.gear;
+  const effThrottle = Math.max(ctl.sliderThrottle, ctl.keyThrottle, ctl.oscThrottle);
+  const effBrake = Math.max(ctl.sliderBrake, ctl.keyBrake, ctl.oscBrake);
+  $('thrVal').textContent = `${Math.round(effThrottle * 100)}%`;
+  $('brkVal').textContent = `${Math.round(effBrake * 100)}%`;
+  requestAnimationFrame(loop);
+}
+
+// ---------------- config UI ----------------
+function buildConfigForm() {
+  const form = $('configForm');
+  form.innerHTML = '';
+  for (const sec of CONFIG_SCHEMA) {
+    const div = document.createElement('div');
+    div.className = 'cfg-section';
+    const h = document.createElement('h3');
+    h.textContent = sec.section;
+    div.appendChild(h);
+    for (const item of sec.items) {
+      const row = document.createElement('div');
+      row.className = 'cfg-item';
+      const label = document.createElement('label');
+      label.textContent = item.label;
+      row.appendChild(label);
+      if (item.type === 'select') {
+        const sel = document.createElement('select');
+        sel.dataset.key = item.key;
+        for (const [v, t] of item.options) {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = t;
+          sel.appendChild(o);
+        }
+        sel.value = config[item.key];
+        // live apply: hear the change immediately
+        sel.addEventListener('change', () => { config[item.key] = sanitizeConfigValue(item.key, sel.value); sendConfig(); });
+        row.appendChild(sel);
+      } else {
+        const range = document.createElement('input');
+        range.type = 'range';
+        range.min = item.min; range.max = item.max; range.step = item.step;
+        range.value = config[item.key];
+        range.dataset.key = item.key;
+        const num = document.createElement('span');
+        num.className = 'num';
+        num.textContent = config[item.key];
+        // live apply while dragging (debounced)
+        range.addEventListener('input', () => {
+          config[item.key] = sanitizeConfigValue(item.key, range.value);
+          range.value = config[item.key];
+          num.textContent = config[item.key];
+          scheduleApply();
+        });
+        row.appendChild(range);
+        row.appendChild(num);
+      }
+      div.appendChild(row);
+    }
+    form.appendChild(div);
+  }
+}
+
+function refreshConfigForm() {
+  for (const el of document.querySelectorAll('#configForm [data-key]')) {
+    const k = el.dataset.key;
+    el.value = config[k];
+    if (el.type === 'range') el.nextElementSibling.textContent = config[k];
+  }
+}
+
+// debounced live config apply
+let applyTimer = null;
+function scheduleApply() {
+  clearTimeout(applyTimer);
+  applyTimer = setTimeout(sendConfig, 120);
+}
+
+// ---------------- presets (built-in + user, persisted in localStorage) ----------------
+const USER_PRESET_KEY = 'engineSimUserPresets';
+function loadUserPresets() {
+  try { return JSON.parse(localStorage.getItem(USER_PRESET_KEY)) || {}; }
+  catch { return {}; }
+}
+function refreshPresetList(selectedValue) {
+  const sel = $('preset');
+  sel.innerHTML = '';
+  const gb = document.createElement('optgroup');
+  gb.label = '内蔵プリセット';
+  for (const name of Object.keys(PRESETS)) {
+    const o = document.createElement('option');
+    o.value = 'b:' + name; o.textContent = name;
+    gb.appendChild(o);
+  }
+  sel.appendChild(gb);
+  const users = loadUserPresets();
+  const names = Object.keys(users);
+  if (names.length) {
+    const gu = document.createElement('optgroup');
+    gu.label = 'カスタム';
+    for (const name of names) {
+      const o = document.createElement('option');
+      o.value = 'u:' + name; o.textContent = name;
+      gu.appendChild(o);
+    }
+    sel.appendChild(gu);
+  }
+  if (selectedValue) sel.value = selectedValue;
+}
+
+function buildPresets() {
+  refreshPresetList();
+  $('preset').addEventListener('change', () => {
+    const v = $('preset').value;
+    const src = v.startsWith('u:') ? loadUserPresets()[v.slice(2)] : PRESETS[v.slice(2)];
+    if (!src) return;
+    config = sanitizeConfig({ ...DEFAULT_CONFIG, ...src });
+    refreshConfigForm();
+    sendConfig();
+  });
+  $('savePresetBtn').addEventListener('click', () => {
+    const name = $('presetName').value.trim();
+    if (!name) { $('presetName').focus(); return; }
+    const users = loadUserPresets();
+    users[name] = { ...config };
+    localStorage.setItem(USER_PRESET_KEY, JSON.stringify(users));
+    refreshPresetList('u:' + name);
+    $('presetName').value = '';
+  });
+  $('deletePresetBtn').addEventListener('click', () => {
+    const v = $('preset').value;
+    if (!v.startsWith('u:')) return;
+    const users = loadUserPresets();
+    delete users[v.slice(2)];
+    localStorage.setItem(USER_PRESET_KEY, JSON.stringify(users));
+    refreshPresetList();
+  });
+}
+
+// ---------------- OSC via WebSocket ----------------
+let oscMsgCount = 0;
+function connectWS() {
+  if (!location.host) {
+    $('wsStatus').textContent = 'WS: 静的表示';
+    $('oscStatus').textContent = 'OSC: ローカルサーバー起動時のみ';
+    return;
+  }
+  const localHostnames = new Set(['localhost', '127.0.0.1', '::1']);
+  if (!localHostnames.has(location.hostname)) {
+    $('wsStatus').textContent = 'WS: 公開版';
+    $('oscStatus').textContent = 'OSC: ローカル版のみ';
+    $('oscLog').textContent = '公開URLではブラウザ内の音源とUIが動きます。OSC UDP入力はローカルで npm start を起動した時に使えます。';
+    return;
+  }
+  const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${wsScheme}://${location.host}/ws`);
+  ws.onopen = () => {
+    $('wsStatus').textContent = 'WS: 接続中';
+    $('wsStatus').classList.add('active');
+  };
+  ws.onclose = () => {
+    $('wsStatus').textContent = 'WS: 未接続';
+    $('wsStatus').classList.remove('active');
+    setTimeout(connectWS, 2000);
+  };
+  ws.onmessage = (e) => {
+    let m;
+    try { m = JSON.parse(e.data); } catch { return; }
+    if (m.type === 'hello') {
+      $('oscStatus').textContent = `OSC: udp/${m.oscPort} 待機中`;
+    } else if (m.type === 'osc') {
+      handleOsc(m.address, m.args);
+      sendControls(); // immediate: don't wait for the (possibly throttled) loop
+      oscMsgCount++;
+      $('oscStatus').textContent = `OSC: 受信中 (${oscMsgCount})`;
+      $('oscStatus').classList.add('active');
+      $('oscLog').textContent = `OSC受信: ${m.address} ${m.args.map(a => typeof a === 'number' ? +a.toFixed(3) : a).join(' ')}`;
+    }
+  };
+}
+
+function handleOsc(address, args) {
+  const a = args[0];
+  const rawNum = typeof a === 'number' ? a : (a === true ? 1 : 0);
+  const num = Number.isFinite(rawNum) ? rawNum : 0;
+  const pedalValue = (v) => {
+    if (!Number.isFinite(v)) return 0;
+    if (v > 100) return clamp(v / 127, 0, 1);
+    if (v > 1) return clamp(v / 100, 0, 1);
+    return clamp(v, 0, 1);
+  };
+  switch (address) {
+    case '/engine/throttle':
+    case '/engine/accelerator':
+    case '/engine/accel':
+    case '/engine/gas':
+    case '/throttle':
+    case '/accelerator':
+    case '/accel':
+    case '/gas':
+      ctl.oscThrottle = pedalValue(num);
+      break;
+    case '/engine/brake':
+    case '/brake':
+      ctl.oscBrake = pedalValue(num);
+      break;
+    case '/engine/pedals':
+    case '/pedals':
+      ctl.oscThrottle = pedalValue(num);
+      ctl.oscBrake = pedalValue(typeof args[1] === 'number' ? args[1] : 0);
+      break;
+    case '/engine/rpm': ctl.extRpm = num; $('extRpm').value = num; $('extRpmVal').textContent = Math.round(num); break;
+    case '/engine/load': ctl.extLoad = pedalValue(num); break;
+    case '/engine/ignition': setIgnition(num >= 0.5); break;
+    case '/engine/gear':
+      if (num <= 0) sendCommand('neutral');
+      else { sendCommand('neutral'); for (let i = 0; i < Math.round(num); i++) sendCommand('gearUp'); }
+      break;
+    case '/engine/gearup': sendCommand('gearUp'); break;
+    case '/engine/geardown': sendCommand('gearDown'); break;
+    case '/engine/mode': setMode((a === 'ext' || num >= 0.5) ? 'ext' : 'sim'); break;
+    default:
+      if (address.startsWith('/engine/config/')) {
+        const key = address.slice('/engine/config/'.length);
+        if (key in DEFAULT_CONFIG) {
+          config[key] = sanitizeConfigValue(key, typeof a === 'string' ? a : num, config[key]);
+          config = sanitizeConfig(config);
+          refreshConfigForm();
+          scheduleApply();
+        }
+      }
+  }
+}
+
+// ---------------- UI wiring ----------------
+function setIgnition(on) {
+  ctl.ignition = on;
+  const b = $('ignitionBtn');
+  b.textContent = on ? 'エンジン ON' : 'エンジン OFF';
+  b.title = on ? 'クリックでエンジン停止' : 'クリックでエンジン始動';
+  b.classList.toggle('on', on);
+  b.classList.toggle('off', !on);
+  sendControls();
+}
+
+function setMode(mode) {
+  ctl.mode = mode;
+  $('rpmMode').value = mode;
+  $('extRpmRow').style.display = mode === 'ext' ? '' : 'none';
+}
+
+function setupUI() {
+  $('throttle').addEventListener('input', (e) => {
+    ctl.sliderThrottle = e.target.value / 100;
+    $('thrVal').textContent = `${e.target.value}%`;
+    sendControls();
+  });
+  $('brake').addEventListener('input', (e) => {
+    ctl.sliderBrake = e.target.value / 100;
+    $('brkVal').textContent = `${e.target.value}%`;
+    sendControls();
+  });
+  $('volume').addEventListener('input', (e) => {
+    // setTargetAtTime avoids zipper noise while dragging
+    if (gainNode) gainNode.gain.setTargetAtTime(e.target.value / 100, audioCtx.currentTime, 0.03);
+  });
+  $('ignitionBtn').addEventListener('click', () => setIgnition(!ctl.ignition));
+  $('gearUpBtn').addEventListener('click', () => sendCommand('gearUp'));
+  $('gearDownBtn').addEventListener('click', () => sendCommand('gearDown'));
+  $('neutralBtn').addEventListener('click', () => sendCommand('neutral'));
+  $('rpmMode').addEventListener('change', (e) => { setMode(e.target.value); sendControls(); });
+  $('extRpm').addEventListener('input', (e) => {
+    ctl.extRpm = parseFloat(e.target.value);
+    $('extRpmVal').textContent = e.target.value;
+    sendControls();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.code === 'KeyW' || e.code === 'ArrowUp') { keys.throttle = true; e.preventDefault(); }
+    else if (e.code === 'KeyS' || e.code === 'ArrowDown') { keys.brake = true; e.preventDefault(); }
+    else if (e.code === 'KeyE' && !e.repeat) sendCommand('gearUp');
+    else if (e.code === 'KeyQ' && !e.repeat) sendCommand('gearDown');
+    else if (e.code === 'KeyN' && !e.repeat) sendCommand('neutral');
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'KeyW' || e.code === 'ArrowUp') keys.throttle = false;
+    else if (e.code === 'KeyS' || e.code === 'ArrowDown') keys.brake = false;
+  });
+
+  $('startBtn').addEventListener('click', async () => {
+    try {
+      await startAudio();
+      $('startOverlay').style.display = 'none';
+    } catch (err) {
+      $('startOverlay').style.display = '';
+      alert('オーディオの初期化に失敗しました: ' + err.message);
+    }
+  });
+}
+
+buildConfigForm();
+buildPresets();
+setupUI();
+setIgnition(ctl.ignition);
+connectWS();
+requestAnimationFrame(loop);
+// rAF is suspended in background tabs; keep controls (incl. OSC input)
+// flowing to the audio thread even when the page is hidden
+setInterval(sendControls, 100);
