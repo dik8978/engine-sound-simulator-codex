@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "mkdir -p dist && cp -R public/. dist/",
+    "build": "node scripts/build-sites.mjs",
     "build:static": "mkdir -p dist && cd public && zip -r ../dist/engine-sound-simulator-public.zip .",
     "deploy:cloudflare": "npx wrangler pages deploy public --project-name engine-sound-simulator-codex"
   },
