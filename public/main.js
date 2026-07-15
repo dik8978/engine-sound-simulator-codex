@@ -59,6 +59,11 @@ const CONFIG_SCHEMA = [
 
 const CONFIG_BY_KEY = new Map(CONFIG_SCHEMA.flatMap((sec) => sec.items.map((item) => [item.key, item])));
 const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1']);
+
+function isLocalServerPage() {
+  return !!location.host && LOCAL_HOSTNAMES.has(location.hostname);
+}
 
 function finiteNumber(v) {
   const n = Number(v);
@@ -238,11 +243,13 @@ function sendCommand(cmd) {
 }
 
 // ---------------- control state ----------------
-// throttle/brake take the max of UI slider, keyboard ramp, and OSC input
+// throttle/brake take the max of UI slider, keyboard ramp, and the selected external input
 const ctl = {
   sliderThrottle: 0, sliderBrake: 0,
   keyThrottle: 0, keyBrake: 0,
   oscThrottle: 0, oscBrake: 0,
+  midiThrottle: 0, midiBrake: 0,
+  externalSource: isLocalServerPage() ? 'osc' : 'midi',
   ignition: true,
   mode: 'sim',
   extRpm: 1000, extLoad: null,
@@ -250,10 +257,18 @@ const ctl = {
 const keys = { throttle: false, brake: false };
 let lastSent = '';
 
+function getExternalPedals() {
+  if (ctl.externalSource === 'midi') {
+    return { throttle: ctl.midiThrottle, brake: ctl.midiBrake };
+  }
+  return { throttle: ctl.oscThrottle, brake: ctl.oscBrake };
+}
+
 function getEffectivePedals() {
+  const external = getExternalPedals();
   return {
-    throttle: Math.max(ctl.sliderThrottle, ctl.keyThrottle, ctl.oscThrottle),
-    brake: Math.max(ctl.sliderBrake, ctl.keyBrake, ctl.oscBrake),
+    throttle: Math.max(ctl.sliderThrottle, ctl.keyThrottle, external.throttle),
+    brake: Math.max(ctl.sliderBrake, ctl.keyBrake, external.brake),
   };
 }
 
@@ -563,11 +578,10 @@ function connectWS() {
     $('oscStatus').textContent = 'OSC: ローカルサーバー起動時のみ';
     return;
   }
-  const localHostnames = new Set(['localhost', '127.0.0.1', '::1']);
-  if (!localHostnames.has(location.hostname)) {
+  if (!isLocalServerPage()) {
     $('wsStatus').textContent = 'WS: 公開版';
     $('oscStatus').textContent = 'OSC: ローカル版のみ';
-    $('oscLog').textContent = '公開URLではブラウザ内の音源とUIが動きます。OSC UDP入力はローカルで npm start を起動した時に使えます。';
+    $('oscLog').textContent = '公開URLではWeb MIDI入力を使えます。OSC UDP入力はローカルで npm start を起動した時に使えます。';
     return;
   }
   const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -588,11 +602,14 @@ function connectWS() {
       $('oscStatus').textContent = `OSC: udp/${m.oscPort} 待機中`;
     } else if (m.type === 'osc') {
       handleOsc(m.address, m.args);
-      sendControls(); // immediate: don't wait for the (possibly throttled) loop
       oscMsgCount++;
       $('oscStatus').textContent = `OSC: 受信中 (${oscMsgCount})`;
       $('oscStatus').classList.add('active');
       $('oscLog').textContent = `OSC受信: ${m.address} ${m.args.map(a => typeof a === 'number' ? +a.toFixed(3) : a).join(' ')}`;
+      if (ctl.externalSource === 'osc') {
+        sendControls(); // immediate: don't wait for the (possibly throttled) loop
+        syncPedalUi();
+      }
     }
   };
 }
@@ -650,6 +667,113 @@ function handleOsc(address, args) {
   }
 }
 
+// ---------------- Web MIDI ----------------
+let midiAccess = null;
+let activeMidiInputId = '';
+let midiMsgCount = 0;
+
+function setMidiStatus(text, active = false) {
+  const el = $('midiStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('active', active);
+}
+
+function setExternalSource(source) {
+  ctl.externalSource = source === 'midi' ? 'midi' : 'osc';
+  $('externalInput').value = ctl.externalSource;
+  $('externalInputStatus').textContent = ctl.externalSource === 'midi' ? 'Web MIDI' : 'OSC';
+  $('midiRow').style.display = ctl.externalSource === 'midi' ? '' : 'none';
+  sendControls();
+  syncPedalUi();
+}
+
+function midiValue(v) {
+  return clamp((Number.isFinite(v) ? v : 0) / 127, 0, 1);
+}
+
+function handleMidiMessage(e) {
+  const [status, data1, data2] = e.data;
+  const command = status & 0xf0;
+  const channel = (status & 0x0f) + 1;
+  if (command !== 0xb0) return;
+  const value = midiValue(data2);
+  if (data1 === 1 || data1 === 11) {
+    ctl.midiThrottle = value;
+  } else if (data1 === 2 || data1 === 64) {
+    ctl.midiBrake = value;
+  } else {
+    return;
+  }
+  midiMsgCount++;
+  setMidiStatus(`MIDI: 受信中 (${midiMsgCount})`, true);
+  $('oscLog').textContent = `MIDI受信: ch${channel} CC${data1} ${data2}`;
+  sendControls();
+  syncPedalUi();
+}
+
+function selectMidiInput(id) {
+  if (!midiAccess) return;
+  for (const input of midiAccess.inputs.values()) {
+    input.onmidimessage = null;
+  }
+  activeMidiInputId = id || '';
+  const input = midiAccess.inputs.get(activeMidiInputId);
+  if (!input) {
+    setMidiStatus('MIDI: 入力なし');
+    return;
+  }
+  input.onmidimessage = handleMidiMessage;
+  setMidiStatus(`MIDI: ${input.name || '入力'} 待機中`, false);
+}
+
+function refreshMidiInputs() {
+  const sel = $('midiInput');
+  sel.innerHTML = '';
+  const inputs = midiAccess ? Array.from(midiAccess.inputs.values()) : [];
+  if (!inputs.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = 'MIDI入力なし';
+    sel.appendChild(o);
+    sel.disabled = true;
+    selectMidiInput('');
+    return;
+  }
+  sel.disabled = false;
+  for (const input of inputs) {
+    const o = document.createElement('option');
+    o.value = input.id;
+    o.textContent = input.name || `MIDI入力 ${sel.length + 1}`;
+    sel.appendChild(o);
+  }
+  const hasActive = inputs.some((input) => input.id === activeMidiInputId);
+  sel.value = hasActive ? activeMidiInputId : inputs[0].id;
+  selectMidiInput(sel.value);
+}
+
+async function enableMidi() {
+  setExternalSource('midi');
+  if (!('requestMIDIAccess' in navigator)) {
+    setMidiStatus('MIDI: 非対応');
+    $('oscLog').textContent = 'このブラウザはWeb MIDIに対応していません。Chrome / Edge系で試してください。';
+    return;
+  }
+  if (!window.isSecureContext) {
+    setMidiStatus('MIDI: HTTPSのみ');
+    $('oscLog').textContent = 'Web MIDIはHTTPSまたはlocalhostで有効です。';
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    midiAccess.onstatechange = refreshMidiInputs;
+    refreshMidiInputs();
+  } catch (err) {
+    setMidiStatus('MIDI: 許可なし');
+    $('oscLog').textContent = `MIDI接続に失敗: ${err.message || err}`;
+  }
+}
+
 // ---------------- UI wiring ----------------
 function setIgnition(on) {
   ctl.ignition = on;
@@ -692,6 +816,9 @@ function setupUI() {
     $('extRpmVal').textContent = e.target.value;
     sendControls();
   });
+  $('externalInput').addEventListener('change', (e) => setExternalSource(e.target.value));
+  $('midiConnectBtn').addEventListener('click', enableMidi);
+  $('midiInput').addEventListener('change', (e) => selectMidiInput(e.target.value));
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.code === 'KeyW' || e.code === 'ArrowUp') { keys.throttle = true; e.preventDefault(); }
@@ -729,6 +856,7 @@ function syncPedalUi() {
 buildConfigForm();
 buildPresets();
 setupUI();
+setExternalSource(ctl.externalSource);
 setIgnition(ctl.ignition);
 connectWS();
 requestAnimationFrame(loop);
