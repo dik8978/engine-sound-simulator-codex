@@ -798,7 +798,7 @@ function handleOsc(address, args) {
 
 // ---------------- Web MIDI ----------------
 let midiAccess = null;
-let activeMidiInputId = '';
+let activeMidiInputId = 'all';
 let midiMsgCount = 0;
 
 function setMidiStatus(text, active = false) {
@@ -825,28 +825,37 @@ function handleMidiMessage(e) {
   const [status, data1, data2] = e.data;
   const command = status & 0xf0;
   const channel = (status & 0x0f) + 1;
-  if (command !== 0xb0) return;
-  const value = midiValue(data2);
-  if (data1 === 1 || data1 === 11) {
-    ctl.midiThrottle = value;
-  } else if (data1 === 2 || data1 === 64) {
-    ctl.midiBrake = value;
-  } else {
-    return;
-  }
+  const sourceName = e.target?.name || 'MIDI';
   midiMsgCount++;
   setMidiStatus(`MIDI: 受信中 (${midiMsgCount})`, true);
-  $('oscLog').textContent = `MIDI受信: ch${channel} CC${data1} ${data2}`;
+  $('oscLog').textContent = `MIDI Raw: ${sourceName} status ${status} ch${channel} data ${data1} ${data2}`;
+  if (command === 0xb0) {
+    const value = midiValue(data2);
+    if (data1 === 1 || data1 === 11) {
+      ctl.midiThrottle = value;
+      $('oscLog').textContent = `MIDI受信: ${sourceName} ch${channel} CC${data1} ${data2} → アクセル`;
+    } else if (data1 === 2 || data1 === 64) {
+      ctl.midiBrake = value;
+      $('oscLog').textContent = `MIDI受信: ${sourceName} ch${channel} CC${data1} ${data2} → ブレーキ`;
+    }
+  }
   sendControls();
   syncPedalUi();
 }
 
 function selectMidiInput(id) {
   if (!midiAccess) return;
+  activeMidiInputId = id || 'all';
   for (const input of midiAccess.inputs.values()) {
     input.onmidimessage = null;
   }
-  activeMidiInputId = id || '';
+  if (activeMidiInputId === 'all') {
+    for (const input of midiAccess.inputs.values()) {
+      input.onmidimessage = handleMidiMessage;
+    }
+    setMidiStatus('MIDI: 全入力 待機中', false);
+    return;
+  }
   const input = midiAccess.inputs.get(activeMidiInputId);
   if (!input) {
     setMidiStatus('MIDI: 入力なし');
@@ -870,14 +879,18 @@ function refreshMidiInputs() {
     return;
   }
   sel.disabled = false;
+  const allOption = document.createElement('option');
+  allOption.value = 'all';
+  allOption.textContent = 'All MIDI Inputs';
+  sel.appendChild(allOption);
   for (const input of inputs) {
     const o = document.createElement('option');
     o.value = input.id;
     o.textContent = input.name || `MIDI入力 ${sel.length + 1}`;
     sel.appendChild(o);
   }
-  const hasActive = inputs.some((input) => input.id === activeMidiInputId);
-  sel.value = hasActive ? activeMidiInputId : inputs[0].id;
+  const hasActive = activeMidiInputId === 'all' || inputs.some((input) => input.id === activeMidiInputId);
+  sel.value = hasActive ? activeMidiInputId : 'all';
   selectMidiInput(sel.value);
 }
 
