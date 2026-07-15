@@ -27,7 +27,8 @@
 
 <nav id="mobileTabs" class="mobile-tabs" role="tablist" aria-label="表示切り替え">
   <button id="dashboardTab" type="button" role="tab" aria-selected="true" aria-controls="dashboard">操作</button>
-  <button id="configTab" type="button" role="tab" aria-selected="false" aria-controls="configPanel" tabindex="-1">エンジン設定</button>
+  <button id="generalTab" type="button" role="tab" aria-selected="false" aria-controls="generalPanel" tabindex="-1">一般設定</button>
+  <button id="configTab" type="button" role="tab" aria-selected="false" aria-controls="configPanel" tabindex="-1">エンジン</button>
 </nav>
 
 <main>
@@ -54,50 +55,74 @@
           <label>アクセル<br><span id="thrVal">0%</span></label>
         </div>
       </div>
-      <div class="ctl-row">
-        <label>音量</label>
-        <input type="range" id="volume" min="0" max="100" value="60">
-      </div>
-      <div class="ctl-row output-row">
-        <label>出力先 <span id="audioOutputStatus">Default</span></label>
-        <div class="device-controls">
-          <select id="audioOutput" aria-label="音声出力先"></select>
-          <button id="audioOutputRefreshBtn" type="button">選択</button>
-        </div>
-      </div>
-      <div class="btn-row">
+      <div class="engine-actions">
         <button id="ignitionBtn" class="toggle on" title="エンジンの始動/停止">エンジン ON</button>
-        <button id="gearDownBtn">◀ シフトダウン</button>
-        <button id="gearUpBtn">シフトアップ ▶</button>
-        <button id="neutralBtn">N</button>
+        <button id="neutralBtn" title="ニュートラル">N</button>
       </div>
-      <div class="ctl-row mode-row">
-        <label>RPMモード</label>
-        <select id="rpmMode">
-          <option value="sim">内部シミュレーション</option>
-          <option value="ext">外部RPM直接指定</option>
-        </select>
+      <div class="shift-controls">
+        <button id="gearDownBtn" aria-label="シフトダウン" title="シフトダウン">
+          <span class="shift-symbol">−</span><span class="shift-label">シフトダウン</span>
+        </button>
+        <button id="gearUpBtn" aria-label="シフトアップ" title="シフトアップ">
+          <span class="shift-symbol">＋</span><span class="shift-label">シフトアップ</span>
+        </button>
       </div>
-      <div class="ctl-row" id="extRpmRow" style="display:none">
-        <label>外部RPM <span id="extRpmVal">1000</span></label>
-        <input type="range" id="extRpm" min="0" max="16000" value="1000">
-      </div>
-      <div class="ctl-row mode-row">
-        <label>外部入力 <span id="externalInputStatus">OSC</span></label>
-        <select id="externalInput">
-          <option value="osc">OSC UDP</option>
-          <option value="midi">Web MIDI</option>
-        </select>
-      </div>
-      <div class="ctl-row midi-row" id="midiRow" style="display:none">
-        <div class="midi-controls">
-          <button id="midiConnectBtn" type="button">Web MIDI接続</button>
-          <select id="midiInput" aria-label="MIDI入力"></select>
+      <div id="desktopGeneralMount">
+        <div id="generalSettings" class="general-settings">
+          <div class="settings-group">
+            <div class="settings-title">オーディオ</div>
+            <div class="ctl-row">
+              <label>音量</label>
+              <input type="range" id="volume" min="0" max="100" value="60">
+            </div>
+            <div class="ctl-row output-row">
+              <label>出力先 <span id="audioOutputStatus">Default</span></label>
+              <div class="device-controls">
+                <select id="audioOutput" aria-label="音声出力先"></select>
+                <button id="audioOutputRefreshBtn" type="button">選択</button>
+              </div>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-title">入力・同期</div>
+            <div class="ctl-row mode-row">
+              <label>RPMモード</label>
+              <select id="rpmMode">
+                <option value="sim">内部シミュレーション</option>
+                <option value="ext">外部RPM直接指定</option>
+              </select>
+            </div>
+            <div class="ctl-row" id="extRpmRow" style="display:none">
+              <label>外部RPM <span id="extRpmVal">1000</span></label>
+              <input type="range" id="extRpm" min="0" max="16000" value="1000">
+            </div>
+            <div class="ctl-row mode-row">
+              <label>外部入力 <span id="externalInputStatus">OSC</span></label>
+              <select id="externalInput">
+                <option value="osc">OSC UDP</option>
+                <option value="midi">Web MIDI</option>
+              </select>
+            </div>
+            <div class="ctl-row midi-row" id="midiRow" style="display:none">
+              <div class="midi-controls">
+                <button id="midiConnectBtn" type="button">Web MIDI接続</button>
+                <select id="midiInput" aria-label="MIDI入力"></select>
+              </div>
+            </div>
+          </div>
+          <p class="hint">キーボード: <kbd>W</kbd>/<kbd>↑</kbd> アクセル, <kbd>S</kbd>/<kbd>↓</kbd> ブレーキ, <kbd>E</kbd> シフトアップ, <kbd>Q</kbd> シフトダウン, <kbd>N</kbd> ニュートラル</p>
+          <p class="osc-help">OSC: udp/9000 → <code>/engine/throttle</code>, <code>/engine/brake</code>, <code>/engine/pedals throttle brake</code><br>Web MIDI: まずAll MIDI Inputsで監視。CC1/11 アクセル, CC2/64 ブレーキ</p>
+          <div id="oscLog" class="osc-log">OSC受信: なし</div>
         </div>
       </div>
-      <p class="hint">キーボード: <kbd>W</kbd>/<kbd>↑</kbd> アクセル, <kbd>S</kbd>/<kbd>↓</kbd> ブレーキ, <kbd>E</kbd> シフトアップ, <kbd>Q</kbd> シフトダウン, <kbd>N</kbd> ニュートラル</p>
-      <p class="osc-help">OSC: udp/9000 → <code>/engine/throttle</code>, <code>/engine/brake</code>, <code>/engine/pedals throttle brake</code><br>Web MIDI: まずAll MIDI Inputsで監視。CC1/11 アクセル, CC2/64 ブレーキ</p>
-      <div id="oscLog" class="osc-log">OSC受信: なし</div>
+    </div>
+  </section>
+
+  <section id="generalPanel" role="tabpanel" aria-labelledby="generalTab">
+    <div class="general-header"><h2>一般設定</h2></div>
+    <div class="general-panel-scroll">
+      <div id="generalStatusMount" class="general-status-mount"></div>
+      <div id="generalPanelContent"></div>
     </div>
   </section>
 

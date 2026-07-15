@@ -340,8 +340,41 @@ async function chooseAudioOutput() {
   }
 }
 
+function configurePlaybackAudioSession() {
+  const session = navigator.audioSession;
+  if (!session || !('type' in session)) return false;
+  try {
+    session.type = 'playback';
+    return session.type === 'playback';
+  } catch {
+    return false;
+  }
+}
+
+function waitForAudioAttempt(promise, timeoutMs = 750) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
+async function resumeAudioPlayback() {
+  configurePlaybackAudioSession();
+  if (!audioCtx) return;
+  try {
+    if (audioCtx.state === 'suspended') await waitForAudioAttempt(audioCtx.resume());
+    if (outputRouting === 'element' && outputAudio?.paused) await waitForAudioAttempt(outputAudio.play());
+  } catch {
+    // A later user gesture will retry through the pointer handler.
+  }
+}
+
 async function startAudio() {
-  if (audioCtx) return; // guard against double start
+  configurePlaybackAudioSession();
+  if (audioCtx) {
+    await resumeAudioPlayback();
+    return;
+  }
   audioCtx = new AudioContext({ latencyHint: 'interactive' });
   await audioCtx.audioWorklet.addModule('engine-worklet.js');
   engineNode = new AudioWorkletNode(audioCtx, 'engine-processor', { outputChannelCount: [2] });
@@ -358,6 +391,7 @@ async function startAudio() {
   engineNode.port.onmessage = (e) => onWorkletMessage(e.data);
   applyOutputEq();
   await applyAudioOutput(audioOutputDeviceId);
+  await resumeAudioPlayback();
   sendConfig();
   sendControls();
 }
@@ -934,27 +968,56 @@ function setMode(mode) {
 }
 
 function setupUI() {
-  const setMobileView = (view) => {
-    const selected = view === 'config' ? 'config' : 'dashboard';
-    document.body.dataset.mobileView = selected;
-    const dashboardSelected = selected === 'dashboard';
-    $('dashboardTab').setAttribute('aria-selected', String(dashboardSelected));
-    $('dashboardTab').tabIndex = dashboardSelected ? 0 : -1;
-    $('configTab').setAttribute('aria-selected', String(!dashboardSelected));
-    $('configTab').tabIndex = dashboardSelected ? -1 : 0;
-    const panel = dashboardSelected ? $('dashboard') : $('configPanel');
-    panel.scrollTop = 0;
+  const mobileMedia = window.matchMedia('(max-width: 900px)');
+  const generalSettings = $('generalSettings');
+  const headerStatus = document.querySelector('.header-right');
+  const header = document.querySelector('header');
+  const syncAdaptiveLayout = () => {
+    if (mobileMedia.matches) {
+      if (generalSettings.parentElement !== $('generalPanelContent')) $('generalPanelContent').appendChild(generalSettings);
+      if (headerStatus.parentElement !== $('generalStatusMount')) $('generalStatusMount').appendChild(headerStatus);
+    } else {
+      if (generalSettings.parentElement !== $('desktopGeneralMount')) $('desktopGeneralMount').appendChild(generalSettings);
+      if (headerStatus.parentElement !== header) header.appendChild(headerStatus);
+    }
   };
-  $('dashboardTab').addEventListener('click', () => setMobileView('dashboard'));
-  $('configTab').addEventListener('click', () => setMobileView('config'));
+  syncAdaptiveLayout();
+  if (typeof mobileMedia.addEventListener === 'function') mobileMedia.addEventListener('change', syncAdaptiveLayout);
+  else mobileMedia.addListener(syncAdaptiveLayout);
+
+  const mobileViews = [
+    { name: 'dashboard', tab: $('dashboardTab'), panel: $('dashboard') },
+    { name: 'general', tab: $('generalTab'), panel: $('generalPanel') },
+    { name: 'config', tab: $('configTab'), panel: $('configPanel') },
+  ];
+  const setMobileView = (view) => {
+    const selected = mobileViews.some((item) => item.name === view) ? view : 'dashboard';
+    document.body.dataset.mobileView = selected;
+    for (const item of mobileViews) {
+      const active = item.name === selected;
+      item.tab.setAttribute('aria-selected', String(active));
+      item.tab.tabIndex = active ? 0 : -1;
+    }
+    if (selected === 'general') document.querySelector('.general-panel-scroll').scrollTop = 0;
+    else if (selected === 'config') $('configForm').scrollTop = 0;
+  };
+  for (const item of mobileViews) item.tab.addEventListener('click', () => setMobileView(item.name));
   $('mobileTabs').addEventListener('keydown', (e) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
-    const next = document.body.dataset.mobileView === 'dashboard' ? 'config' : 'dashboard';
-    setMobileView(next);
-    $(next === 'dashboard' ? 'dashboardTab' : 'configTab').focus();
+    const current = Math.max(0, mobileViews.findIndex((item) => item.name === document.body.dataset.mobileView));
+    const delta = e.key === 'ArrowRight' ? 1 : -1;
+    const next = mobileViews[(current + delta + mobileViews.length) % mobileViews.length];
+    setMobileView(next.name);
+    next.tab.focus();
   });
   setMobileView('dashboard');
+
+  document.addEventListener('pointerdown', () => { void resumeAudioPlayback(); }, { passive: true, capture: true });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void resumeAudioPlayback();
+  });
+  window.addEventListener('pageshow', () => { void resumeAudioPlayback(); });
 
   $('throttle').addEventListener('input', (e) => {
     ctl.sliderThrottle = e.target.value / 100;
