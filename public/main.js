@@ -177,6 +177,10 @@ let audioCtx = null;
 let engineNode = null;
 let gainNode = null;
 let eqNodes = null;
+let outputStreamDest = null;
+let outputAudio = null;
+let outputRouting = 'context';
+let audioOutputDeviceId = 'default';
 
 function setFilterParam(param, value, timeConstant = 0.03) {
   if (!audioCtx) {
@@ -212,6 +216,130 @@ function applyOutputEq() {
   setFilterParam(eqNodes.high.gain, config.eqHigh);
 }
 
+function setAudioOutputStatus(text, active = false) {
+  const el = $('audioOutputStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('active', active);
+}
+
+function audioOutputLabel(deviceId = audioOutputDeviceId) {
+  const sel = $('audioOutput');
+  const option = sel ? [...sel.options].find((item) => item.value === deviceId) : null;
+  return option?.textContent || (deviceId === 'default' ? 'Default' : 'Selected');
+}
+
+function connectAudioToOutput(useElementSink = false) {
+  if (!audioCtx || !gainNode) return;
+  try { gainNode.disconnect(); } catch {}
+  if (useElementSink) {
+    if (!outputStreamDest) outputStreamDest = audioCtx.createMediaStreamDestination();
+    if (!outputAudio) {
+      outputAudio = new Audio();
+      outputAudio.autoplay = true;
+      outputAudio.playsInline = true;
+      outputAudio.srcObject = outputStreamDest.stream;
+      outputAudio.style.display = 'none';
+      document.body.appendChild(outputAudio);
+    }
+    gainNode.connect(outputStreamDest);
+    outputRouting = 'element';
+  } else {
+    gainNode.connect(audioCtx.destination);
+    outputRouting = 'context';
+  }
+}
+
+async function applyAudioOutput(deviceId = audioOutputDeviceId) {
+  audioOutputDeviceId = deviceId || 'default';
+  const sinkId = audioOutputDeviceId === 'default' ? '' : audioOutputDeviceId;
+  const label = audioOutputLabel(audioOutputDeviceId);
+  if (!audioCtx) {
+    setAudioOutputStatus(`${label} / 音開始後`);
+    return;
+  }
+  const canSetContextSink = typeof audioCtx.setSinkId === 'function';
+  const canSetElementSink = 'setSinkId' in HTMLMediaElement.prototype;
+  try {
+    if (canSetContextSink) {
+      connectAudioToOutput(false);
+      await audioCtx.setSinkId(sinkId);
+    } else if (canSetElementSink && sinkId) {
+      connectAudioToOutput(true);
+      await outputAudio.setSinkId(sinkId);
+      await outputAudio.play();
+    } else {
+      connectAudioToOutput(false);
+      if (sinkId) throw new Error('Audio output selection is not supported by this browser.');
+    }
+    setAudioOutputStatus(label, audioOutputDeviceId !== 'default');
+  } catch (err) {
+    setAudioOutputStatus('出力先変更失敗');
+    $('oscLog').textContent = `音声出力先の変更に失敗: ${err.message || err}`;
+  }
+}
+
+async function refreshAudioOutputs(selectedId = audioOutputDeviceId) {
+  const sel = $('audioOutput');
+  sel.innerHTML = '';
+  const defaultOption = document.createElement('option');
+  defaultOption.value = 'default';
+  defaultOption.textContent = 'Default';
+  sel.appendChild(defaultOption);
+  const canEnumerate = !!navigator.mediaDevices?.enumerateDevices;
+  const canSetSink = typeof AudioContext.prototype.setSinkId === 'function' || 'setSinkId' in HTMLMediaElement.prototype;
+  if (!canEnumerate || !canSetSink || !window.isSecureContext) {
+    sel.disabled = true;
+    $('audioOutputRefreshBtn').disabled = true;
+    setAudioOutputStatus(canSetSink ? 'HTTPSのみ' : '未対応');
+    return;
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const outputs = devices.filter((device) => device.kind === 'audiooutput' && device.deviceId !== 'default');
+    outputs.forEach((device, index) => {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = device.label || `Audio Output ${index + 1}`;
+      sel.appendChild(option);
+    });
+    sel.disabled = false;
+    $('audioOutputRefreshBtn').disabled = false;
+    const found = [...sel.options].some((option) => option.value === selectedId);
+    sel.value = found ? selectedId : 'default';
+    audioOutputDeviceId = sel.value;
+    setAudioOutputStatus(audioOutputLabel(sel.value), sel.value !== 'default');
+  } catch (err) {
+    sel.disabled = true;
+    setAudioOutputStatus('取得失敗');
+    $('oscLog').textContent = `音声出力先の取得に失敗: ${err.message || err}`;
+  }
+}
+
+async function chooseAudioOutput() {
+  const canPrompt = !!navigator.mediaDevices?.selectAudioOutput;
+  try {
+    if (canPrompt) {
+      const device = await navigator.mediaDevices.selectAudioOutput();
+      await refreshAudioOutputs(device.deviceId);
+      const hasOption = [...$('audioOutput').options].some((option) => option.value === device.deviceId);
+      if (!hasOption) {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.textContent = device.label || 'Selected Output';
+        $('audioOutput').appendChild(option);
+      }
+      $('audioOutput').value = device.deviceId;
+      await applyAudioOutput(device.deviceId);
+    } else {
+      await refreshAudioOutputs(audioOutputDeviceId);
+      await applyAudioOutput($('audioOutput').value);
+    }
+  } catch (err) {
+    setAudioOutputStatus('選択キャンセル');
+  }
+}
+
 async function startAudio() {
   if (audioCtx) return; // guard against double start
   audioCtx = new AudioContext({ latencyHint: 'interactive' });
@@ -225,10 +353,11 @@ async function startAudio() {
     .connect(eqNodes.lowMid)
     .connect(eqNodes.presence)
     .connect(eqNodes.high)
-    .connect(gainNode)
-    .connect(audioCtx.destination);
+    .connect(gainNode);
+  connectAudioToOutput(false);
   engineNode.port.onmessage = (e) => onWorkletMessage(e.data);
   applyOutputEq();
+  await applyAudioOutput(audioOutputDeviceId);
   sendConfig();
   sendControls();
 }
@@ -806,6 +935,8 @@ function setupUI() {
     // setTargetAtTime avoids zipper noise while dragging
     if (gainNode) gainNode.gain.setTargetAtTime(e.target.value / 100, audioCtx.currentTime, 0.03);
   });
+  $('audioOutput').addEventListener('change', (e) => applyAudioOutput(e.target.value));
+  $('audioOutputRefreshBtn').addEventListener('click', chooseAudioOutput);
   $('ignitionBtn').addEventListener('click', () => setIgnition(!ctl.ignition));
   $('gearUpBtn').addEventListener('click', () => sendCommand('gearUp'));
   $('gearDownBtn').addEventListener('click', () => sendCommand('gearDown'));
@@ -856,6 +987,7 @@ function syncPedalUi() {
 buildConfigForm();
 buildPresets();
 setupUI();
+refreshAudioOutputs();
 setExternalSource(ctl.externalSource);
 setIgnition(ctl.ignition);
 connectWS();

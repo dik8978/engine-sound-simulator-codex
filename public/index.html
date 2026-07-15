@@ -53,6 +53,13 @@
         <label>音量</label>
         <input type="range" id="volume" min="0" max="100" value="60">
       </div>
+      <div class="ctl-row output-row">
+        <label>出力先 <span id="audioOutputStatus">Default</span></label>
+        <div class="device-controls">
+          <select id="audioOutput" aria-label="音声出力先"></select>
+          <button id="audioOutputRefreshBtn" type="button">選択</button>
+        </div>
+      </div>
       <div class="btn-row">
         <button id="ignitionBtn" class="toggle on" title="エンジンの始動/停止">エンジン ON</button>
         <button id="gearDownBtn">◀ シフトダウン</button>
