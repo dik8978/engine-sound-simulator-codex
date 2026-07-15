@@ -44,12 +44,15 @@ header {
   border-bottom: 1px solid var(--border);
 }
 header h1 { font-size: 17px; }
+.header-right { display: flex; align-items: center; }
 .badge {
   font-size: 12px; padding: 3px 10px; border-radius: 10px;
   background: var(--panel2); border: 1px solid var(--border); color: var(--dim);
   margin-left: 8px;
 }
 .badge.active { color: var(--green); border-color: var(--green); }
+
+.mobile-tabs { display: none; }
 
 main {
   flex: 1; display: flex; overflow: hidden;
@@ -216,7 +219,95 @@ kbd {
 .derived { font-size: 11px; color: var(--dim); margin-top: 8px; line-height: 1.6; font-family: "SF Mono", Menlo, monospace; }
 
 @media (max-width: 900px) {
-  main { flex-direction: column; overflow-y: auto; }
-  #configPanel { width: 100%; border-left: none; border-top: 1px solid var(--border); }
-  body { overflow-y: auto; }
+  body {
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+  header {
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 9px 10px;
+  }
+  header h1 { font-size: 15px; }
+  .header-right {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .badge {
+    min-width: 0;
+    margin-left: 0;
+    padding: 3px 6px;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-tabs {
+    order: 3;
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+  }
+  .mobile-tabs button {
+    min-height: 38px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--dim);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .mobile-tabs button[aria-selected="true"] {
+    border-bottom-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
+  }
+  main { order: 2; min-height: 0; overflow: hidden; }
+  #dashboard {
+    min-width: 0;
+    width: 100%;
+    padding: 10px;
+  }
+  #configPanel {
+    width: 100%;
+    min-height: 0;
+    border-top: 0;
+    border-left: 0;
+  }
+  body[data-mobile-view="dashboard"] #configPanel,
+  body[data-mobile-view="config"] #dashboard { display: none; }
+  #gauges { gap: 6px; }
+  #gauges canvas { width: min(49%, 260px); }
+  #readouts { gap: 22px; margin-bottom: 10px; }
+  .readout span { font-size: 28px; }
+  .vslider { height: 150px; }
+  .pedal-row { margin-top: 2px; }
+  .btn-row { display: grid; grid-template-columns: 1fr 1fr; }
+  .btn-row button { min-height: 40px; padding: 8px; }
+  .cfg-item { grid-template-columns: minmax(90px, 1fr) minmax(82px, 110px) 64px; gap: 6px; }
+  .config-header { gap: 8px; padding: 10px 12px; }
+  .config-header select { min-width: 0; max-width: min(62vw, 230px); }
+  #configForm { padding: 10px 12px; }
+  .config-footer { padding: 10px 12px; }
+  .preset-save { flex-wrap: wrap; }
+  .preset-save input { flex-basis: 100%; }
+  .preset-save button { flex: 1; }
+}
+
+@media (max-width: 380px) {
+  .device-controls,
+  .midi-controls { align-items: stretch; flex-direction: column; }
+  .device-controls button,
+  .midi-controls button { min-height: 38px; }
+  .cfg-item { grid-template-columns: minmax(78px, 1fr) minmax(72px, 96px) 58px; }
+  .cfg-item label { font-size: 11.5px; }
 }

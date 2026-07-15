@@ -197,6 +197,8 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.coastSince = 0;  // when the throttle was last released
     this.prevThrottle = 0;
     this.throttleVel = 0;
+    this.prevAcousticRpm = 0;
+    this.loadTransient = 0; // short timbre change from load/rev derivatives
     this.liftHoldUntil = -1; // short sport/engine-brake hold after big lifts
     this.effLoadT = 0;      // load target (pre-cut), slewed into audioLoad
     this.effThr = 0;
@@ -236,6 +238,7 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.bypassPhase = 0;
     this.intakeLP1 = 0;
     this.intakeLP2 = 0;
+    this.intakeBed = 0;
     this.reportCounter = 0;
     this.port.onmessage = (e) => this.onMessage(e.data);
     this.applyConfig(defaultConfig());
@@ -392,6 +395,18 @@ class EngineProcessor extends AudioWorkletProcessor {
     return c.maxTorque * (1 - 0.4 * x * x);
   }
 
+  updateDynamicTimbre(dt) {
+    const rpmRate = (this.rpm - this.prevAcousticRpm) / Math.max(dt, 1e-6);
+    this.prevAcousticRpm = this.rpm;
+    const target = clamp(
+      Math.abs(this.throttleVel) * 0.025 +
+      Math.abs(rpmRate) / Math.max(6000, this.cfg.redline * 3.2),
+      0, 1,
+    );
+    const tau = target > this.loadTransient ? 0.012 : 0.14;
+    this.loadTransient += (target - this.loadTransient) * (1 - Math.exp(-dt / tau));
+  }
+
   // ---------- vehicle / rpm physics ----------
   physics(dt) {
     const c = this.cfg;
@@ -399,6 +414,9 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.time += dt;
 
     if (ctl.mode === 'ext') {
+      const extThr = clamp(ctl.throttle, 0, 1);
+      this.throttleVel = (extThr - this.prevThrottle) / Math.max(dt, 1e-6);
+      this.prevThrottle = extThr;
       const target = clamp(ctl.extRpm, 0, c.redline * 1.05);
       const maxStep = 25000 * dt;
       this.rpm += clamp(target - this.rpm, -maxStep, maxStep);
@@ -417,6 +435,7 @@ class EngineProcessor extends AudioWorkletProcessor {
         const G = c.ratios[this.gear - 1] * c.finalDrive;
         this.speed = this.rpm / 60 * TWO_PI * c.wheelR / G;
       }
+      this.updateDynamicTimbre(dt);
       return;
     }
 
@@ -588,6 +607,7 @@ class EngineProcessor extends AudioWorkletProcessor {
     const aInst = (this.speed - this.prevSpeed) / dt;
     this.prevSpeed = this.speed;
     this.accel += 0.08 * (aInst - this.accel);
+    this.updateDynamicTimbre(dt);
 
     // slow multiplicative combustion drift (~1 Hz random walk, ±5%):
     // real engines breathe; a perfectly static amplitude sounds synthetic
@@ -633,7 +653,10 @@ class EngineProcessor extends AudioWorkletProcessor {
     // rpm still moves a lot of exhaust gas — load alone made lift-off
     // collapse by ~20 dB, which sounds like the engine being switched off
     const rpmN = clamp(this.audioRpm / c.redline, 0, 1);
-    const combustionGate = 1 - 0.72 * D;
+    // During DFCO the cylinders still pump air, but combustion itself stops.
+    // Keep that airflow in the resonators below instead of leaving a quiet
+    // pitched combustion train running under closed throttle.
+    const combustionGate = Math.pow(1 - D, 1.35);
     let amp = (0.13 + 0.24 * rpmN + 0.63 * L) * combustionGate * cyl.trim * this.wander;
     // small per-cycle combustion variation. Kept SMALL on purpose: at high rpm
     // per-cycle randomness becomes >100 Hz amplitude modulation, which reads
@@ -727,6 +750,7 @@ class EngineProcessor extends AudioWorkletProcessor {
 
       // per-cylinder bipolar exhaust pulses (crank-angle domain)
       let exc0 = 0, exc1 = 0, envSum0 = 0, envSum1 = 0, pumpEnv0 = 0, pumpEnv1 = 0;
+      let intakePulseEnv = 0;
       if (this.audioRpm > 30) {
         for (let k = 0; k < this.cyls.length; k++) {
           const cyl = this.cyls[k];
@@ -736,6 +760,16 @@ class EngineProcessor extends AudioWorkletProcessor {
           cyl.lastX = baseX;
           let x = baseX - cyl.microJitter;
           if (x < 0) x += 720;
+          // Intake-valve flow occurs on the opposite half of the four-stroke
+          // cycle. A separate phase-locked envelope gives the induction sound
+          // recognizable cylinder articulation instead of steady filtered hiss.
+          let intakeX = baseX - 360 - cyl.microJitter * 0.35;
+          if (intakeX < 0) intakeX += 720;
+          if (intakeX < 205) {
+            const iu = intakeX / 205;
+            const is = Math.sin(Math.PI * iu);
+            intakePulseEnv += is * is;
+          }
           if (x < pulseWindow) {
             const u = x * invW;
             const om = 1 - u;
@@ -761,14 +795,17 @@ class EngineProcessor extends AudioWorkletProcessor {
       this.noiseLP += 0.32 * (white - this.noiseLP);
       this.bedEnv0 += 0.004 * (envSum0 - this.bedEnv0);
       this.bedEnv1 += 0.004 * (envSum1 - this.bedEnv1);
-      const noiseMix = 0.35 + 0.3 * this.audioLoad + 0.22 * this.audioDecel;
+      const noiseMix = 0.35 + 0.3 * this.audioLoad + 0.22 * this.audioDecel + 0.10 * this.loadTransient;
       exc0 += (0.7 * envSum0 + 0.5 * this.bedEnv0) * this.noiseLP * noiseMix;
       exc1 += (0.7 * envSum1 + 0.5 * this.bedEnv1) * this.noiseLP * noiseMix;
       if (this.audioDecel > 0.001) {
         const pumpShake = Math.sin(this.theta * Math.PI / 90);
-        const pumpAir = 0.16 * this.noiseLP + 0.035 * pumpShake;
+        const pumpAir = 0.30 * this.noiseLP + 0.055 * pumpShake;
         exc0 += pumpEnv0 * this.audioDecel * pumpAir;
         exc1 += pumpEnv1 * this.audioDecel * pumpAir;
+        const steadyAir = this.noiseLP * this.audioDecel * (0.012 + 0.028 * rpmNPhase);
+        exc0 += steadyAir;
+        if (nBanks > 1) exc1 += steadyAir * 0.92;
       }
 
       // afterfire pops (short smooth transients)
@@ -839,7 +876,12 @@ class EngineProcessor extends AudioWorkletProcessor {
         this.intakeLP2 += 0.03 * (this.intakeLP1 - this.intakeLP2);
         const bp = this.intakeLP1 - this.intakeLP2;
         const rpmN = clamp(this.audioRpm / c.redline, 0, 1);
-        y += bp * c.intakeNoise * (this.audioLoad * (0.12 + 0.45 * rpmN) + this.audioDecel * 0.08 * rpmN);
+        const intakeNorm = intakePulseEnv / Math.sqrt(Math.max(1, c.cylinders));
+        this.intakeBed += 0.0035 * (intakeNorm - this.intakeBed);
+        const cycleGate = clamp(0.42 + 0.72 * intakeNorm + 0.22 * this.intakeBed, 0.25, 1.7);
+        const intakeFlow = this.audioLoad * (0.12 + 0.45 * rpmN) + this.audioDecel * 0.07 * rpmN;
+        const intakeTexture = 0.84 * bp + 0.16 * (white - this.noiseLP);
+        y += intakeTexture * c.intakeNoise * intakeFlow * cycleGate * (1 + 0.22 * this.loadTransient);
       }
 
       const turboAmt = c.turboWhine * (0.15 + 0.85 * this.turboSpool) *

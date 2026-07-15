@@ -24,13 +24,13 @@ const CONFIG_SCHEMA = [
     ]},
     { key: 'firingUnevenness', label: '点火間隔の不等度', min: 0, max: 1, step: 0.01 },
     { key: 'idleRpm', label: 'アイドル回転数 (rpm)', min: 400, max: 5000, step: 50 },
-    { key: 'redline', label: 'レブリミット (rpm)', min: 3000, max: 20000, step: 100 },
+    { key: 'redline', label: 'レブリミット (rpm)', min: 3000, max: 20000, step: 50 },
   ]},
   { section: '性能・車両', items: [
     { key: 'maxTorque', label: '最大トルク (Nm)', min: 20, max: 1200, step: 5 },
-    { key: 'peakTorqueRpm', label: '最大トルク回転数 (rpm)', min: 1000, max: 14000, step: 100 },
+    { key: 'peakTorqueRpm', label: '最大トルク回転数 (rpm)', min: 1000, max: 14000, step: 50 },
     { key: 'maxSpeedKmh', label: '最高速度 (km/h)', min: 60, max: 450, step: 5 },
-    { key: 'vehicleMass', label: '車両重量 (kg)', min: 100, max: 3500, step: 10 },
+    { key: 'vehicleMass', label: '車両重量 (kg)', min: 100, max: 3500, step: 5 },
     { key: 'maxBrakeG', label: 'ブレーキ最大減速G', min: 0.3, max: 6, step: 0.1 },
     { key: 'numGears', label: 'ギア段数', min: 1, max: 9, step: 1 },
     { key: 'transmission', label: 'トランスミッション', type: 'select', options: [
@@ -40,7 +40,7 @@ const CONFIG_SCHEMA = [
     { key: 'engineBrake', label: 'エンジンブレーキ強さ', min: 0, max: 3, step: 0.05 },
   ]},
   { section: '排気・サウンド', items: [
-    { key: 'pipeLength', label: '排気管長 (m)', min: 0.4, max: 6, step: 0.1 },
+    { key: 'pipeLength', label: '排気管長 (m)', min: 0.4, max: 6, step: 0.05 },
     { key: 'muffler', label: 'マフラー消音度', min: 0, max: 1, step: 0.01 },
     { key: 'drive', label: '歪み / 荒々しさ', min: 0, max: 1, step: 0.01 },
     { key: 'intakeNoise', label: '吸気ノイズ', min: 0, max: 1, step: 0.01 },
@@ -100,7 +100,7 @@ function sanitizeConfig(src) {
 
 const PRESETS = {
   '2026 F1 1.6L V6 Hybrid': {
-    displacement: 1.6, cylinders: 6, layout: 'v90', firingUnevenness: 0.25,
+    displacement: 1.6, cylinders: 6, layout: 'v90', firingUnevenness: 0,
     idleRpm: 4200, redline: 12500,
     maxTorque: 690, peakTorqueRpm: 7800, maxSpeedKmh: 355, vehicleMass: 780,
     maxBrakeG: 4.5,
@@ -934,6 +934,28 @@ function setMode(mode) {
 }
 
 function setupUI() {
+  const setMobileView = (view) => {
+    const selected = view === 'config' ? 'config' : 'dashboard';
+    document.body.dataset.mobileView = selected;
+    const dashboardSelected = selected === 'dashboard';
+    $('dashboardTab').setAttribute('aria-selected', String(dashboardSelected));
+    $('dashboardTab').tabIndex = dashboardSelected ? 0 : -1;
+    $('configTab').setAttribute('aria-selected', String(!dashboardSelected));
+    $('configTab').tabIndex = dashboardSelected ? -1 : 0;
+    const panel = dashboardSelected ? $('dashboard') : $('configPanel');
+    panel.scrollTop = 0;
+  };
+  $('dashboardTab').addEventListener('click', () => setMobileView('dashboard'));
+  $('configTab').addEventListener('click', () => setMobileView('config'));
+  $('mobileTabs').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = document.body.dataset.mobileView === 'dashboard' ? 'config' : 'dashboard';
+    setMobileView(next);
+    $(next === 'dashboard' ? 'dashboardTab' : 'configTab').focus();
+  });
+  setMobileView('dashboard');
+
   $('throttle').addEventListener('input', (e) => {
     ctl.sliderThrottle = e.target.value / 100;
     $('thrVal').textContent = `${e.target.value}%`;

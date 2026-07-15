@@ -25,9 +25,14 @@
   </div>
 </header>
 
+<nav id="mobileTabs" class="mobile-tabs" role="tablist" aria-label="表示切り替え">
+  <button id="dashboardTab" type="button" role="tab" aria-selected="true" aria-controls="dashboard">操作</button>
+  <button id="configTab" type="button" role="tab" aria-selected="false" aria-controls="configPanel" tabindex="-1">エンジン設定</button>
+</nav>
+
 <main>
   <!-- 左: メーター & 操作 -->
-  <section id="dashboard">
+  <section id="dashboard" role="tabpanel" aria-labelledby="dashboardTab">
     <div id="gauges">
       <canvas id="tach" width="320" height="320"></canvas>
       <canvas id="speedo" width="320" height="320"></canvas>
@@ -97,7 +102,7 @@
   </section>
 
   <!-- 右: エンジン設定 -->
-  <section id="configPanel">
+  <section id="configPanel" role="tabpanel" aria-labelledby="configTab">
     <div class="config-header">
       <h2>エンジン設定</h2>
       <select id="preset"></select>
