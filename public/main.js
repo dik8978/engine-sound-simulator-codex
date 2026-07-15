@@ -65,6 +65,12 @@ function finiteNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function finiteDirectNumber(v) {
+  const text = String(v).trim();
+  if (!text || text === '-' || text === '.' || text === '-.') return null;
+  return finiteNumber(text);
+}
+
 function sanitizeConfigValue(key, value, fallback = DEFAULT_CONFIG[key]) {
   const item = CONFIG_BY_KEY.get(key);
   if (!item) return undefined;
@@ -156,8 +162,10 @@ const PRESETS = {
   },
 };
 
-// startup default: the F1 preset
-let config = sanitizeConfig({ ...DEFAULT_CONFIG, ...PRESETS['2026 F1 1.6L V6 Hybrid'] });
+const DEFAULT_PRESET_NAME = 'Lamborghini Aventador 6.5L V12';
+
+// startup default: Lamborghini V12. F1 remains available from the preset list.
+let config = sanitizeConfig({ ...DEFAULT_CONFIG, ...PRESETS[DEFAULT_PRESET_NAME] });
 
 // ---------------- audio ----------------
 let audioCtx = null;
@@ -242,11 +250,19 @@ const ctl = {
 const keys = { throttle: false, brake: false };
 let lastSent = '';
 
-function sendControls() {
-  if (!engineNode) return;
-  const controls = {
+function getEffectivePedals() {
+  return {
     throttle: Math.max(ctl.sliderThrottle, ctl.keyThrottle, ctl.oscThrottle),
     brake: Math.max(ctl.sliderBrake, ctl.keyBrake, ctl.oscBrake),
+  };
+}
+
+function sendControls() {
+  if (!engineNode) return;
+  const pedals = getEffectivePedals();
+  const controls = {
+    throttle: pedals.throttle,
+    brake: pedals.brake,
     ignition: ctl.ignition,
     mode: ctl.mode,
     extRpm: ctl.extRpm,
@@ -364,14 +380,21 @@ function loop(now) {
   $('rpmVal').textContent = Math.round(state.rpm);
   $('speedVal').textContent = Math.round(state.speedKmh);
   $('gearVal').textContent = state.gear === 0 ? 'N' : state.gear;
-  const effThrottle = Math.max(ctl.sliderThrottle, ctl.keyThrottle, ctl.oscThrottle);
-  const effBrake = Math.max(ctl.sliderBrake, ctl.keyBrake, ctl.oscBrake);
-  $('thrVal').textContent = `${Math.round(effThrottle * 100)}%`;
-  $('brkVal').textContent = `${Math.round(effBrake * 100)}%`;
+  syncPedalUi();
   requestAnimationFrame(loop);
 }
 
 // ---------------- config UI ----------------
+function formatConfigNumber(key, value = config[key]) {
+  const item = CONFIG_BY_KEY.get(key);
+  if (!item || item.type === 'select') return String(value);
+  const n = finiteNumber(value);
+  if (n == null) return String(value);
+  const stepText = String(item.step);
+  const decimals = stepText.includes('.') ? stepText.split('.')[1].length : 0;
+  return decimals > 0 ? n.toFixed(Math.min(decimals, 3)).replace(/\.?0+$/, '') : String(Math.round(n));
+}
+
 function buildConfigForm() {
   const form = $('configForm');
   form.innerHTML = '';
@@ -405,15 +428,48 @@ function buildConfigForm() {
         range.min = item.min; range.max = item.max; range.step = item.step;
         range.value = config[item.key];
         range.dataset.key = item.key;
-        const num = document.createElement('span');
+        const num = document.createElement('input');
+        num.type = 'number';
         num.className = 'num';
-        num.textContent = config[item.key];
+        num.min = item.min;
+        num.max = item.max;
+        num.step = item.step;
+        num.value = formatConfigNumber(item.key);
+        num.dataset.key = item.key;
+        num.inputMode = item.step === 1 ? 'numeric' : 'decimal';
+        num.title = 'クリックして数値を直接入力';
+        const applyValue = (raw, immediate = false) => {
+          const parsed = finiteDirectNumber(raw);
+          config[item.key] = sanitizeConfigValue(item.key, parsed == null ? config[item.key] : parsed, config[item.key]);
+          config = sanitizeConfig(config);
+          refreshConfigForm();
+          if (immediate) sendConfig();
+          else scheduleApply();
+        };
         // live apply while dragging (debounced)
         range.addEventListener('input', () => {
-          config[item.key] = sanitizeConfigValue(item.key, range.value);
+          applyValue(range.value);
+        });
+        num.addEventListener('input', () => {
+          const parsed = finiteDirectNumber(num.value);
+          if (parsed == null) return;
+          config[item.key] = sanitizeConfigValue(item.key, parsed, config[item.key]);
+          config = sanitizeConfig(config);
           range.value = config[item.key];
-          num.textContent = config[item.key];
           scheduleApply();
+        });
+        num.addEventListener('change', () => applyValue(num.value, true));
+        num.addEventListener('blur', () => { num.value = formatConfigNumber(item.key); });
+        num.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            applyValue(num.value, true);
+            num.blur();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            num.value = formatConfigNumber(item.key);
+            num.blur();
+          }
         });
         row.appendChild(range);
         row.appendChild(num);
@@ -427,8 +483,7 @@ function buildConfigForm() {
 function refreshConfigForm() {
   for (const el of document.querySelectorAll('#configForm [data-key]')) {
     const k = el.dataset.key;
-    el.value = config[k];
-    if (el.type === 'range') el.nextElementSibling.textContent = config[k];
+    el.value = el.classList.contains('num') ? formatConfigNumber(k) : config[k];
   }
 }
 
@@ -472,7 +527,7 @@ function refreshPresetList(selectedValue) {
 }
 
 function buildPresets() {
-  refreshPresetList();
+  refreshPresetList(`b:${DEFAULT_PRESET_NAME}`);
   $('preset').addEventListener('change', () => {
     const v = $('preset').value;
     const src = v.startsWith('u:') ? loadUserPresets()[v.slice(2)] : PRESETS[v.slice(2)];
@@ -659,6 +714,16 @@ function setupUI() {
       alert('オーディオの初期化に失敗しました: ' + err.message);
     }
   });
+}
+
+function syncPedalUi() {
+  const pedals = getEffectivePedals();
+  const throttlePct = Math.round(pedals.throttle * 100);
+  const brakePct = Math.round(pedals.brake * 100);
+  $('throttle').value = throttlePct;
+  $('brake').value = brakePct;
+  $('thrVal').textContent = `${throttlePct}%`;
+  $('brkVal').textContent = `${brakePct}%`;
 }
 
 buildConfigForm();

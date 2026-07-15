@@ -143,12 +143,30 @@ kbd {
   font-size: 12px; color: var(--accent2); letter-spacing: 1px;
   border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 8px;
 }
-.cfg-item { display: grid; grid-template-columns: 1fr 110px 58px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.cfg-item { display: grid; grid-template-columns: 1fr 110px 68px; gap: 8px; align-items: center; margin-bottom: 6px; }
 .cfg-item label { font-size: 12.5px; color: var(--text); }
 .cfg-item input[type=range] { width: 100%; accent-color: var(--accent2); }
 .cfg-item .num {
-  font-size: 12px; font-family: "SF Mono", Menlo, monospace; text-align: right; color: var(--dim);
+  width: 100%;
+  padding: 2px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: "SF Mono", Menlo, monospace;
+  text-align: right;
+  color: var(--dim);
+  appearance: textfield;
 }
+.cfg-item .num:hover,
+.cfg-item .num:focus {
+  background: var(--panel2);
+  border-color: var(--border);
+  color: var(--text);
+  outline: none;
+}
+.cfg-item .num::-webkit-outer-spin-button,
+.cfg-item .num::-webkit-inner-spin-button { appearance: none; margin: 0; }
 .cfg-item select {
   grid-column: 2 / 4;
   padding: 4px; background: var(--panel2); color: var(--text);
