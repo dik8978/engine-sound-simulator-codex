@@ -308,15 +308,58 @@ main {
 }
 
 .vslider {
-  width: 48px;
+  --pedal-color: var(--accent);
+  --pedal-track-width: 12px;
+  --pedal-thumb-size: 32px;
+  width: 60px;
   height: 188px;
+  appearance: none;
+  -webkit-appearance: none;
   writing-mode: vertical-rl;
   direction: rtl;
-  accent-color: var(--accent);
+  border: 0;
+  background: transparent;
+  cursor: grab;
+}
+
+.vslider:active {
+  cursor: grabbing;
+}
+
+.vslider::-webkit-slider-runnable-track {
+  width: var(--pedal-track-width);
+  height: 100%;
+  border-radius: 2px;
+  background: var(--surface-strong);
+}
+
+.vslider::-webkit-slider-thumb {
+  width: var(--pedal-thumb-size);
+  height: var(--pedal-thumb-size);
+  margin-left: calc((var(--pedal-track-width) - var(--pedal-thumb-size)) / 2);
+  border: 2px solid var(--surface);
+  border-radius: var(--radius);
+  -webkit-appearance: none;
+  background: var(--pedal-color);
+}
+
+.vslider::-moz-range-track {
+  width: var(--pedal-track-width);
+  height: 100%;
+  border-radius: 2px;
+  background: var(--surface-strong);
+}
+
+.vslider::-moz-range-thumb {
+  width: var(--pedal-thumb-size);
+  height: var(--pedal-thumb-size);
+  border: 2px solid var(--surface);
+  border-radius: var(--radius);
+  background: var(--pedal-color);
 }
 
 .vslider.brake-s {
-  accent-color: #748083;
+  --pedal-color: #748083;
 }
 
 .engine-actions {
@@ -1155,18 +1198,11 @@ kbd {
   }
 
   .vslider {
-    width: 76px;
+    --pedal-track-width: 16px;
+    --pedal-thumb-size: 40px;
+    width: 88px;
     height: clamp(150px, 30dvh, 260px);
     touch-action: none;
-  }
-
-  .vslider::-webkit-slider-thumb {
-    transform: scale(1.55);
-  }
-
-  .vslider::-moz-range-thumb {
-    width: 34px;
-    height: 34px;
   }
 
   .engine-actions {
