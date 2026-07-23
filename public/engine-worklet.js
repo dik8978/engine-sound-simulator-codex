@@ -22,6 +22,17 @@ const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 const PHYS_INTERVAL = 64;       // samples between physics steps
 const DEFAULT_PULSE_WINDOW = 260; // crank degrees of one exhaust pulse
 const LAYOUTS = new Set(['inline', 'v60', 'v90', 'flat', 'crossplane', 'vtwin']);
+const ENVELOPE_TABLE_SIZE = 2048;
+const PULSE_ENVELOPE = new Float32Array(ENVELOPE_TABLE_SIZE + 1);
+const INTAKE_ENVELOPE = new Float32Array(ENVELOPE_TABLE_SIZE + 1);
+
+for (let i = 0; i <= ENVELOPE_TABLE_SIZE; i++) {
+  const u = i / ENVELOPE_TABLE_SIZE;
+  const om = 1 - u;
+  PULSE_ENVELOPE[i] = 6.0 * Math.pow(u, 0.7) * om * om * om;
+  const s = Math.sin(Math.PI * u);
+  INTAKE_ENVELOPE[i] = s * s;
+}
 
 function finiteNumber(v, fallback) {
   const n = Number(v);
@@ -212,7 +223,7 @@ class EngineProcessor extends AudioWorkletProcessor {
     this.audioDecel = 0;
     this.kRpm = 1 - Math.exp(-1 / (0.025 * this.sr));  // ~25 ms smoothing
     this.riseLim = 15000 / this.sr;  // rpm/sample: free-rev blips stay snappy
-    this.kLoad = 1 - Math.exp(-1 / (0.070 * this.sr)); // ~70 ms slew
+    this.kLoad = 1 - Math.exp(-1 / (0.045 * this.sr)); // fast acoustic load response
     this.kDecel = 1 - Math.exp(-1 / (0.090 * this.sr)); // DFCO airflow slew
     this.kDC = 1 - Math.exp(-TWO_PI * 15 / this.sr);   // 15 Hz DC blocker
     // synthesis state
@@ -482,10 +493,10 @@ class EngineProcessor extends AudioWorkletProcessor {
     const airDemand = Math.pow(clamp(thrForTorque, 0, 1), 0.65);
     const manifoldTarget = ctl.ignition ? airDemand : 0;
     const manifoldTau = manifoldTarget > this.manifold ?
-      0.040 + 0.070 * (1 - rpmNPhys) :
+      0.030 + 0.045 * (1 - rpmNPhys) :
       0.090 + 0.060 * rpmNPhys;
     this.manifold += clamp((manifoldTarget - this.manifold) * dt / manifoldTau, -0.12, 0.12);
-    const torqueAir = 0.28 * airDemand + 0.72 * this.manifold;
+    const torqueAir = 0.38 * airDemand + 0.62 * this.manifold;
 
     const rpmBoost = clamp((this.rpm - c.idleRpm * 0.7) / Math.max(800, c.redline * 0.58), 0, 1);
     const spoolTarget = ctl.ignition ? c.turboWhine * rpmBoost * (0.15 + 0.85 * torqueAir) : 0;
@@ -707,7 +718,6 @@ class EngineProcessor extends AudioWorkletProcessor {
     const nBanks = this.bankCombs.length;
     const pulseWindow = c.pulseWindow || DEFAULT_PULSE_WINDOW;
     const invW = 1 / pulseWindow;
-    const envNorm = 6.0; // normalizes peak of u^0.7*(1-u)^3 to ~1
 
     for (let i = 0; i < outL.length; i++) {
       if (this.physCounter-- <= 0) {
@@ -767,15 +777,15 @@ class EngineProcessor extends AudioWorkletProcessor {
           if (intakeX < 0) intakeX += 720;
           if (intakeX < 205) {
             const iu = intakeX / 205;
-            const is = Math.sin(Math.PI * iu);
-            intakePulseEnv += is * is;
+            const envelopeIndex = Math.min(ENVELOPE_TABLE_SIZE, (iu * ENVELOPE_TABLE_SIZE) | 0);
+            intakePulseEnv += INTAKE_ENVELOPE[envelopeIndex];
           }
           if (x < pulseWindow) {
             const u = x * invW;
-            const om = 1 - u;
             // u^0.7 attack: softer corner than sqrt -> less aliasing fizz at
             // high rpm where the pulse compresses to a few milliseconds
-            const env = envNorm * Math.pow(u, 0.7) * om * om * om;
+            const envelopeIndex = Math.min(ENVELOPE_TABLE_SIZE, (u * ENVELOPE_TABLE_SIZE) | 0);
+            const env = PULSE_ENVELOPE[envelopeIndex];
             const pump = env * c.pulseAmp;
             if (cyl.bank === 0) pumpEnv0 += pump;
             else pumpEnv1 += pump;

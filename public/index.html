@@ -47,11 +47,17 @@
     <div class="controls-panel">
       <div class="pedal-row">
         <div class="pedal">
-          <input type="range" id="brake" min="0" max="100" value="0" orient="vertical" class="vslider brake-s">
+          <div class="pedal-slider brake-s" style="--pedal-position: 0%">
+            <input type="range" id="brake" min="0" max="100" value="0" orient="vertical" class="vslider" aria-label="ブレーキ">
+            <span class="pedal-slider-thumb" aria-hidden="true"></span>
+          </div>
           <label>ブレーキ<br><span id="brkVal">0%</span></label>
         </div>
         <div class="pedal">
-          <input type="range" id="throttle" min="0" max="100" value="0" orient="vertical" class="vslider">
+          <div class="pedal-slider" style="--pedal-position: 0%">
+            <input type="range" id="throttle" min="0" max="100" value="0" orient="vertical" class="vslider" aria-label="アクセル">
+            <span class="pedal-slider-thumb" aria-hidden="true"></span>
+          </div>
           <label>アクセル<br><span id="thrVal">0%</span></label>
         </div>
       </div>

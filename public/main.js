@@ -182,6 +182,22 @@ let outputAudio = null;
 let outputRouting = 'context';
 let audioOutputDeviceId = 'default';
 
+function createRealtimeAudioContext() {
+  try {
+    return new AudioContext({ latencyHint: 0.01 });
+  } catch {
+    return new AudioContext({ latencyHint: 'interactive' });
+  }
+}
+
+function audioLatencyLabel() {
+  if (!audioCtx) return '';
+  const base = Number(audioCtx.baseLatency) || 0;
+  const output = Number(audioCtx.outputLatency) || 0;
+  const totalMs = Math.round((base + output) * 1000);
+  return totalMs > 0 ? `${totalMs} ms` : '';
+}
+
 function setFilterParam(param, value, timeConstant = 0.03) {
   if (!audioCtx) {
     param.value = value;
@@ -283,7 +299,8 @@ async function applyAudioOutput(deviceId = audioOutputDeviceId) {
       if (sinkId) throw new Error('Audio output selection is not supported by this browser.');
     }
     await applyReferenceAudioSink(sinkId);
-    setAudioOutputStatus(label, audioOutputDeviceId !== 'default');
+    const latency = audioLatencyLabel();
+    setAudioOutputStatus(latency ? `${label} / ${latency}` : label, audioOutputDeviceId !== 'default');
   } catch (err) {
     setAudioOutputStatus('出力先変更失敗');
     $('oscLog').textContent = `音声出力先の変更に失敗: ${err.message || err}`;
@@ -386,7 +403,7 @@ async function startAudio() {
     await resumeAudioPlayback();
     return;
   }
-  audioCtx = new AudioContext({ latencyHint: 'interactive' });
+  audioCtx = createRealtimeAudioContext();
   await audioCtx.audioWorklet.addModule('engine-worklet.js');
   engineNode = new AudioWorkletNode(audioCtx, 'engine-processor', { outputChannelCount: [2] });
   eqNodes = createEqNodes(audioCtx);
@@ -557,6 +574,9 @@ function drawGauges() {
 
 // ---------------- main loop ----------------
 let lastT = performance.now();
+let lastUiRenderT = 0;
+const compactUiMedia = window.matchMedia('(max-width: 900px)');
+
 function loop(now) {
   const dt = Math.min((now - lastT) / 1000, 0.1);
   lastT = now;
@@ -565,11 +585,16 @@ function loop(now) {
   ctl.keyBrake = keys.brake ? Math.min(1, ctl.keyBrake + dt * 4.5) : Math.max(0, ctl.keyBrake - dt * 6);
   sendControls();
 
-  drawGauges();
-  $('rpmVal').textContent = Math.round(state.rpm);
-  $('speedVal').textContent = Math.round(state.speedKmh);
-  $('gearVal').textContent = state.gear === 0 ? 'N' : state.gear;
-  syncPedalUi();
+  const uiInterval = compactUiMedia.matches ? 1000 / 30 : 1000 / 60;
+  if (now - lastUiRenderT >= uiInterval) {
+    lastUiRenderT = now;
+    const dashboardVisible = !compactUiMedia.matches || document.body.dataset.mobileView === 'dashboard';
+    if (dashboardVisible) drawGauges();
+    $('rpmVal').textContent = Math.round(state.rpm);
+    $('speedVal').textContent = Math.round(state.speedKmh);
+    $('gearVal').textContent = state.gear === 0 ? 'N' : state.gear;
+    syncPedalUi();
+  }
   requestAnimationFrame(loop);
 }
 
@@ -1308,13 +1333,17 @@ function setupUI() {
   window.addEventListener('pageshow', () => { void resumeAudioPlayback(); });
 
   $('throttle').addEventListener('input', (e) => {
-    ctl.sliderThrottle = e.target.value / 100;
-    $('thrVal').textContent = `${e.target.value}%`;
+    const value = Number(e.target.value);
+    ctl.sliderThrottle = value / 100;
+    e.target.parentElement.style.setProperty('--pedal-position', `${value}%`);
+    $('thrVal').textContent = `${value}%`;
     sendControls();
   });
   $('brake').addEventListener('input', (e) => {
-    ctl.sliderBrake = e.target.value / 100;
-    $('brkVal').textContent = `${e.target.value}%`;
+    const value = Number(e.target.value);
+    ctl.sliderBrake = value / 100;
+    e.target.parentElement.style.setProperty('--pedal-position', `${value}%`);
+    $('brkVal').textContent = `${value}%`;
     sendControls();
   });
   $('volume').addEventListener('input', (e) => {
@@ -1366,6 +1395,8 @@ function syncPedalUi() {
   const brakePct = Math.round(pedals.brake * 100);
   $('throttle').value = throttlePct;
   $('brake').value = brakePct;
+  $('throttle').parentElement.style.setProperty('--pedal-position', `${throttlePct}%`);
+  $('brake').parentElement.style.setProperty('--pedal-position', `${brakePct}%`);
   $('thrVal').textContent = `${throttlePct}%`;
   $('brkVal').textContent = `${brakePct}%`;
 }
