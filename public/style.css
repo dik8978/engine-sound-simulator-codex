@@ -310,7 +310,8 @@ main {
 .vslider {
   --pedal-color: var(--accent);
   --pedal-track-width: 32px;
-  --pedal-thumb-size: 32px;
+  --pedal-thumb-width: 32px;
+  --pedal-thumb-height: 32px;
   width: 60px;
   height: 188px;
   appearance: none;
@@ -334,9 +335,9 @@ main {
 }
 
 .vslider::-webkit-slider-thumb {
-  width: var(--pedal-thumb-size);
-  height: var(--pedal-thumb-size);
-  margin-left: calc((var(--pedal-track-width) - var(--pedal-thumb-size)) / 2);
+  width: var(--pedal-thumb-width);
+  height: var(--pedal-thumb-height);
+  margin-left: calc((var(--pedal-track-width) - var(--pedal-thumb-width)) / 2);
   border: 0;
   border-radius: var(--radius);
   -webkit-appearance: none;
@@ -351,8 +352,8 @@ main {
 }
 
 .vslider::-moz-range-thumb {
-  width: var(--pedal-thumb-size);
-  height: var(--pedal-thumb-size);
+  width: var(--pedal-thumb-width);
+  height: var(--pedal-thumb-height);
   border: 0;
   border-radius: var(--radius);
   background: var(--pedal-color);
@@ -1173,29 +1174,38 @@ kbd {
     order: 3;
     flex: 1;
     min-height: 0;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
+    width: calc(100% + 24px);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "pedals"
+      "shift"
+      "engine";
+    gap: 4px;
+    margin-inline: -12px;
   }
 
   .pedal-row {
-    flex: 1;
     min-height: 0;
-    width: calc(100% + 24px);
+    width: 100%;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: flex-start;
-    gap: 0;
-    margin: 0 0 clamp(4px, 1dvh, 9px);
-    margin-inline: -12px;
-    padding: 0;
+    gap: 4px;
+    margin: 0;
+    padding: 0 4px;
   }
 
   .pedal {
+    width: 100%;
+    height: 100%;
     min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-items: stretch;
     gap: 5px;
-    justify-self: center;
+    justify-self: stretch;
   }
 
   .pedal label {
@@ -1203,19 +1213,22 @@ kbd {
   }
 
   .vslider {
-    --pedal-track-width: 40px;
-    --pedal-thumb-size: 40px;
-    width: 88px;
-    height: clamp(150px, 30dvh, 260px);
+    --pedal-track-width: calc((100vw - 12px) / 2);
+    --pedal-thumb-width: calc((100vw - 12px) / 2);
+    --pedal-thumb-height: clamp(62px, 9dvh, 76px);
+    width: var(--pedal-track-width);
+    height: 100%;
+    min-height: 0;
     touch-action: none;
   }
 
   .engine-actions {
-    flex: 0 0 auto;
+    width: 100%;
     display: grid;
-    grid-template-columns: 1fr 76px;
-    gap: 8px;
-    margin: 0 0 7px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    margin: 0;
+    padding: 0 4px;
   }
 
   .engine-actions button {
@@ -1223,11 +1236,12 @@ kbd {
   }
 
   .shift-controls {
-    flex: 0 0 auto;
+    width: 100%;
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
     margin: 0;
+    padding: 0 4px;
   }
 
   .shift-controls button {
@@ -1428,7 +1442,7 @@ kbd {
   }
 
   .vslider {
-    height: clamp(132px, 27dvh, 164px);
+    height: 100%;
   }
 
   .pedal label span {
