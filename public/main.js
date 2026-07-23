@@ -481,7 +481,7 @@ function onWorkletMessage(m) {
 const tach = $('tach');
 const speedo = $('speedo');
 
-// generic 270-degree monochrome gauge
+// generic 270-degree gauge
 function drawGauge(canvas, opts) {
   const g = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
@@ -492,44 +492,44 @@ function drawGauge(canvas, opts) {
 
   // arc background
   g.lineWidth = 10;
-  g.strokeStyle = '#222';
+  g.strokeStyle = '#e3e8e9';
   g.beginPath(); g.arc(cx, cy, R, a0, a1); g.stroke();
   // red zone
   if (opts.redFrom != null && opts.redFrom < opts.max) {
-    g.strokeStyle = '#555';
+    g.strokeStyle = '#b8d4d0';
     g.beginPath(); g.arc(cx, cy, R, vToA(opts.redFrom), a1); g.stroke();
   }
   // value fill
   if (opts.value > 0) {
-    g.strokeStyle = opts.flash ? '#888' : '#fff';
+    g.strokeStyle = opts.flash ? '#a44f24' : '#0f766e';
     g.beginPath(); g.arc(cx, cy, R, a0, vToA(opts.value)); g.stroke();
   }
   // ticks & labels
-  g.font = `${opts.tickFont || 13}px sans-serif`;
+  g.font = `${opts.tickFont || 13}px "SFMono-Regular", "SF Mono", monospace`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let v = 0; v <= opts.max; v += opts.step) {
     const a = vToA(v);
     const inRed = opts.redFrom != null && v >= opts.redFrom;
     const x1 = cx + Math.cos(a) * (R - 14), y1 = cy + Math.sin(a) * (R - 14);
     const x2 = cx + Math.cos(a) * (R - 22), y2 = cy + Math.sin(a) * (R - 22);
-    g.strokeStyle = inRed ? '#fff' : '#666';
+    g.strokeStyle = inRed ? '#0f766e' : '#a4adaf';
     g.lineWidth = 2;
     g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
     const xl = cx + Math.cos(a) * (R - 38), yl = cy + Math.sin(a) * (R - 38);
-    g.fillStyle = inRed ? '#fff' : '#999';
+    g.fillStyle = inRed ? '#0f766e' : '#6c777a';
     g.fillText(opts.tickLabel(v), xl, yl);
   }
   // needle
   const a = vToA(opts.value);
-  g.strokeStyle = '#fff'; g.lineWidth = 3;
+  g.strokeStyle = '#1d272a'; g.lineWidth = 3;
   g.beginPath();
   g.moveTo(cx, cy);
   g.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26));
   g.stroke();
-  g.fillStyle = '#fff';
+  g.fillStyle = '#1d272a';
   g.beginPath(); g.arc(cx, cy, 7, 0, Math.PI * 2); g.fill();
   // center label
-  g.fillStyle = '#999'; g.font = '12px sans-serif';
+  g.fillStyle = '#6c777a'; g.font = '12px "SFMono-Regular", "SF Mono", monospace';
   g.fillText(opts.label, cx, cy + R * 0.55);
 }
 
@@ -771,7 +771,7 @@ function drawReferenceSpectrum(result) {
   const context = canvas.getContext('2d');
   context.setTransform(scale, 0, 0, scale, 0, 0);
   context.clearRect(0, 0, cssWidth, cssHeight);
-  context.fillStyle = '#050505';
+  context.fillStyle = '#f3f5f5';
   context.fillRect(0, 0, cssWidth, cssHeight);
 
   const padding = { left: 32, right: 10, top: 10, bottom: 22 };
@@ -784,12 +784,12 @@ function drawReferenceSpectrum(result) {
   context.textBaseline = 'middle';
   for (const db of [-36, -24, -12, 0]) {
     const y = padding.top + (1 - (db + 48) / 48) * height;
-    context.strokeStyle = db === 0 ? '#555' : '#242424';
+    context.strokeStyle = db === 0 ? '#aeb8ba' : '#dde3e4';
     context.beginPath();
     context.moveTo(padding.left, y);
     context.lineTo(padding.left + width, y);
     context.stroke();
-    context.fillStyle = '#777';
+    context.fillStyle = '#697477';
     context.fillText(String(db), padding.left - 4, y);
   }
   context.textAlign = 'center';
@@ -797,11 +797,11 @@ function drawReferenceSpectrum(result) {
   const orderStep = maxOrder > 16 ? 4 : 2;
   for (let order = orderStep; order <= maxOrder; order += orderStep) {
     const x = padding.left + order / maxOrder * width;
-    context.fillStyle = '#777';
+    context.fillStyle = '#697477';
     context.fillText(String(order), x, padding.top + height + 5);
   }
 
-  context.strokeStyle = '#f2f2f2';
+  context.strokeStyle = '#0f766e';
   context.lineWidth = 1.5;
   context.beginPath();
   spectrum.forEach((point, index) => {
@@ -812,7 +812,7 @@ function drawReferenceSpectrum(result) {
   });
   context.stroke();
 
-  context.fillStyle = '#fff';
+  context.fillStyle = '#0f766e';
   for (let order = result.candidate.firingOrder; order <= maxOrder; order += result.candidate.firingOrder) {
     const point = spectrum.reduce((closest, item) =>
       Math.abs(item.order - order) < Math.abs(closest.order - order) ? item : closest, spectrum[0]);
@@ -1241,8 +1241,9 @@ async function enableMidi() {
 function setIgnition(on) {
   ctl.ignition = on;
   const b = $('ignitionBtn');
-  b.textContent = on ? 'エンジン ON' : 'エンジン OFF';
-  b.title = on ? 'クリックでエンジン停止' : 'クリックでエンジン始動';
+  $('ignitionLabel').textContent = on ? 'ON' : 'OFF';
+  b.setAttribute('aria-label', on ? 'エンジン ON' : 'エンジン OFF');
+  b.title = on ? 'エンジンを停止' : 'エンジンを始動';
   b.classList.toggle('on', on);
   b.classList.toggle('off', !on);
   sendControls();
@@ -1264,7 +1265,7 @@ function setupUI() {
       if (generalSettings.parentElement !== $('generalPanelContent')) $('generalPanelContent').appendChild(generalSettings);
       if (headerStatus.parentElement !== $('generalStatusMount')) $('generalStatusMount').appendChild(headerStatus);
     } else {
-      if (generalSettings.parentElement !== $('desktopGeneralMount')) $('desktopGeneralMount').appendChild(generalSettings);
+      if (generalSettings.parentElement !== $('desktopGeneralBody')) $('desktopGeneralBody').appendChild(generalSettings);
       if (headerStatus.parentElement !== header) header.appendChild(headerStatus);
     }
   };

@@ -17,7 +17,7 @@
 </div>
 
 <header>
-  <h1>🏁 Engine Sound Simulator</h1>
+  <h1>Engine Sound Simulator</h1>
   <div class="header-right">
     <span id="midiStatus" class="badge">MIDI: 未接続</span>
     <span id="oscStatus" class="badge">OSC: 待機中</span>
@@ -56,7 +56,10 @@
         </div>
       </div>
       <div class="engine-actions">
-        <button id="ignitionBtn" class="toggle on" title="エンジンの始動/停止">エンジン ON</button>
+        <button id="ignitionBtn" class="toggle on" title="エンジンを停止" aria-label="エンジン ON">
+          <span class="button-icon" aria-hidden="true">⏻</span>
+          <span id="ignitionLabel">ON</span>
+        </button>
         <button id="neutralBtn" title="ニュートラル">N</button>
       </div>
       <div class="shift-controls">
@@ -68,9 +71,12 @@
         </button>
       </div>
       <div id="desktopGeneralMount">
-        <div id="generalSettings" class="general-settings">
-          <div class="settings-group">
-            <div class="settings-title">オーディオ</div>
+        <details id="desktopGeneralDetails" class="desktop-general">
+          <summary>一般設定</summary>
+          <div id="desktopGeneralBody">
+          <div id="generalSettings" class="general-settings">
+          <details class="settings-group" open>
+            <summary class="settings-title">オーディオ</summary>
             <div class="ctl-row">
               <label>音量</label>
               <input type="range" id="volume" min="0" max="100" value="60">
@@ -79,12 +85,12 @@
               <label>出力先 <span id="audioOutputStatus">Default</span></label>
               <div class="device-controls">
                 <select id="audioOutput" aria-label="音声出力先"></select>
-                <button id="audioOutputRefreshBtn" type="button">選択</button>
+                <button id="audioOutputRefreshBtn" type="button" aria-label="音声出力先を選択" title="音声出力先を選択">↻</button>
               </div>
             </div>
-          </div>
-          <div class="settings-group">
-            <div class="settings-title">入力・同期</div>
+          </details>
+          <details class="settings-group">
+            <summary class="settings-title">入力・同期</summary>
             <div class="ctl-row mode-row">
               <label>RPMモード</label>
               <select id="rpmMode">
@@ -109,11 +115,16 @@
                 <select id="midiInput" aria-label="MIDI入力"></select>
               </div>
             </div>
-          </div>
-          <p class="hint">キーボード: <kbd>W</kbd>/<kbd>↑</kbd> アクセル, <kbd>S</kbd>/<kbd>↓</kbd> ブレーキ, <kbd>E</kbd> シフトアップ, <kbd>Q</kbd> シフトダウン, <kbd>N</kbd> ニュートラル</p>
-          <p class="osc-help">OSC: udp/9000 → <code>/engine/throttle</code>, <code>/engine/brake</code>, <code>/engine/pedals throttle brake</code><br>Web MIDI: まずAll MIDI Inputsで監視。CC1/11 アクセル, CC2/64 ブレーキ</p>
+          </details>
+          <details class="mapping-details">
+            <summary>入力マッピング</summary>
+            <p class="hint">キーボード: <kbd>W</kbd>/<kbd>↑</kbd> アクセル, <kbd>S</kbd>/<kbd>↓</kbd> ブレーキ, <kbd>E</kbd> シフトアップ, <kbd>Q</kbd> シフトダウン, <kbd>N</kbd> ニュートラル</p>
+            <p class="osc-help">OSC: udp/9000 → <code>/engine/throttle</code>, <code>/engine/brake</code>, <code>/engine/pedals throttle brake</code><br>Web MIDI: まずAll MIDI Inputsで監視。CC1/11 アクセル, CC2/64 ブレーキ</p>
+          </details>
           <div id="oscLog" class="osc-log">OSC受信: なし</div>
-        </div>
+          </div>
+          </div>
+        </details>
       </div>
     </div>
   </section>
