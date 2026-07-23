@@ -505,7 +505,7 @@ function drawGauge(canvas, opts) {
     g.beginPath(); g.arc(cx, cy, R, a0, vToA(opts.value)); g.stroke();
   }
   // ticks & labels
-  g.font = `${opts.tickFont || 13}px "SFMono-Regular", "SF Mono", monospace`;
+  g.font = `${opts.tickFont || 13}px "Engine Mono", "SFMono-Regular", monospace`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let v = 0; v <= opts.max; v += opts.step) {
     const a = vToA(v);
@@ -529,7 +529,7 @@ function drawGauge(canvas, opts) {
   g.fillStyle = '#1d272a';
   g.beginPath(); g.arc(cx, cy, 7, 0, Math.PI * 2); g.fill();
   // center label
-  g.fillStyle = '#6c777a'; g.font = '12px "SFMono-Regular", "SF Mono", monospace';
+  g.fillStyle = '#6c777a'; g.font = '12px "Engine Mono", "SFMono-Regular", monospace';
   g.fillText(opts.label, cx, cy + R * 0.55);
 }
 
@@ -779,7 +779,7 @@ function drawReferenceSpectrum(result) {
   const height = cssHeight - padding.top - padding.bottom;
   const spectrum = result.orderSpectrum;
   const maxOrder = spectrum.at(-1)?.order || 1;
-  context.font = '9px "SF Mono", Menlo, monospace';
+  context.font = '9px "Engine Mono", "SF Mono", Menlo, monospace';
   context.textAlign = 'right';
   context.textBaseline = 'middle';
   for (const db of [-36, -24, -12, 0]) {

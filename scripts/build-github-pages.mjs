@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import JavaScriptObfuscator from "javascript-obfuscator";
@@ -71,6 +71,9 @@ async function protectJs(source, name) {
 
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
+await cp(path.join(sourceDir, "fonts"), path.join(outputDir, "fonts"), {
+  recursive: true,
+});
 
 const workletSource = await readFile(path.join(sourceDir, "engine-worklet.js"), "utf8");
 const protectedWorklet = await protectJs(workletSource, "engine-worklet.js");

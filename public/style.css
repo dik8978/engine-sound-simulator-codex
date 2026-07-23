@@ -1,3 +1,19 @@
+@font-face {
+  font-family: "Engine Mono";
+  src: url("fonts/EngineMono-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Engine Mono";
+  src: url("fonts/EngineMono-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -32,7 +48,7 @@ button,
 input,
 select,
 summary {
-  font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", "Noto Sans Mono CJK JP",
+  font-family: "Engine Mono", "SFMono-Regular", "SF Mono", "Noto Sans Mono CJK JP",
     "BIZ UDGothic", "Yu Gothic", monospace;
   letter-spacing: 0;
 }
